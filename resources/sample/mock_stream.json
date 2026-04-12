@@ -1,0 +1,20 @@
+{
+  "pictureWidth": 1280,
+  "pictureHeight": 720,
+  "stream": {
+    "streamType": "HEVC/H.265",
+    "profile": "Main",
+    "compatibility": "Main, Main 10",
+    "levelTier": "3.1 / Main",
+    "chromaFormat": "4:2:0",
+    "bitDepth": 8,
+    "resolution": "1280 x 720",
+    "frameRate": 25.0,
+    "declaredBitrate": "Undefined",
+    "duration": "00:00:10.000",
+    "muxDuration": "00:00:10.000",
+    "psnrYUV": "43, 331 / 46, 00...",
+    "frameCount": 250
+  },
+  "frames": []
+}

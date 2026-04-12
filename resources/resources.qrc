@@ -1,0 +1,12 @@
+<!DOCTYPE RCC><RCC version="1.0">
+  <qresource prefix="/">
+    <file alias="sample/mock_stream.json">sample/mock_stream.json</file>
+    <file alias="icons/open.svg">icons/open.svg</file>
+    <file alias="icons/prev.svg">icons/prev.svg</file>
+    <file alias="icons/next.svg">icons/next.svg</file>
+    <file alias="icons/play.svg">icons/play.svg</file>
+    <file alias="icons/pause.svg">icons/pause.svg</file>
+    <file alias="icons/zoom_in.svg">icons/zoom_in.svg</file>
+    <file alias="icons/zoom_out.svg">icons/zoom_out.svg</file>
+  </qresource>
+</RCC>
