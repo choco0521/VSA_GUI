@@ -44,7 +44,7 @@ void BitrateCurveView::rebuild() {
     chart->addSeries(m_source);
 
     auto* xAxis = new QValueAxis;
-    xAxis->setRange(0, std::max(1, frames.size() - 1));
+    xAxis->setRange(0, std::max<int>(1, static_cast<int>(frames.size()) - 1));
     xAxis->setLabelFormat(QStringLiteral("%i"));
     chart->addAxis(xAxis, Qt::AlignBottom);
     m_bitrate->attachAxis(xAxis);

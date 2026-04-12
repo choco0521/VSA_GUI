@@ -20,7 +20,7 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Charts)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Charts)
 
 qt_standard_project_setup()
 
