@@ -35,6 +35,8 @@ endif()
 set(VSA_CODEC_SOURCES
     src/codec/codec_version.h
     src/codec/codec_version.c
+    src/codec/bit_reader.h
+    src/codec/bit_reader.c
 )
 
 add_library(vsa_codec STATIC ${VSA_CODEC_SOURCES})
@@ -163,6 +165,7 @@ if(VSA_BUILD_TESTS)
     set(VSA_TEST_SOURCES
         tests/test_main.cpp
         tests/test_smoke.cpp
+        tests/test_bitreader.cpp
     )
     add_executable(vsa_tests ${VSA_TEST_SOURCES})
     target_link_libraries(vsa_tests PRIVATE vsa_codec doctest::doctest)
