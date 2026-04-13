@@ -37,6 +37,10 @@ set(VSA_CODEC_SOURCES
     src/codec/codec_version.c
     src/codec/bit_reader.h
     src/codec/bit_reader.c
+    src/codec/annexb.h
+    src/codec/annexb.c
+    src/codec/rbsp.h
+    src/codec/rbsp.c
 )
 
 add_library(vsa_codec STATIC ${VSA_CODEC_SOURCES})
@@ -166,9 +170,18 @@ if(VSA_BUILD_TESTS)
         tests/test_main.cpp
         tests/test_smoke.cpp
         tests/test_bitreader.cpp
+        tests/test_annexb.cpp
+        tests/test_rbsp.cpp
     )
     add_executable(vsa_tests ${VSA_TEST_SOURCES})
     target_link_libraries(vsa_tests PRIVATE vsa_codec doctest::doctest)
+    target_compile_definitions(vsa_tests PRIVATE
+        VSA_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
+    )
 
-    add_test(NAME vsa_tests COMMAND vsa_tests)
+    # Run ctest from the source tree so relative fixture paths in the
+    # smoke harness (and any future JM trace comparison step) resolve.
+    add_test(NAME vsa_tests
+             COMMAND vsa_tests
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
