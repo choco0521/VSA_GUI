@@ -43,6 +43,7 @@ private:
     void setupDataModel();
     void setupCentralLayout();
     void setupDocks();
+    void setupBottomDocks();
     void setupToolbarAndMenu();
     void setupStatusBar();
     void wireSignals();

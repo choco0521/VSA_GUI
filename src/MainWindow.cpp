@@ -10,16 +10,19 @@
 #include "widgets/ViewModeSelector.h"
 
 #include <QDockWidget>
+#include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMenuBar>
+#include <QPlainTextEdit>
 #include <QSplitter>
 #include <QStandardItem>
 #include <QStandardItemModel>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTreeView>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -125,14 +128,15 @@ void MainWindow::setupCentralLayout() {
 void MainWindow::setupDocks() {
     // Configure corners so:
     //   - Top dock (charts) spans from the left edge over the Full-stream
-    //     dock, but stops at the right dock (Motion Vectors / Block Presenter).
-    //   - Right dock (Motion Vectors) extends all the way up to the top of
-    //     the window, sitting next to the BarChart on the same row — this
-    //     matches the reference StreamEye layout.
+    //     dock, but stops at the right dock (Block Presenter / Block Info).
+    //   - Right dock (Block Presenter) extends up to the top of the window,
+    //     sitting next to the BarChart on the same row.
+    //   - Bottom dock (Stream Viewer / Hex-DPB-Message-Buffer-Comment)
+    //     spans the full window width below every other dock.
     setCorner(Qt::TopLeftCorner,     Qt::TopDockWidgetArea);
     setCorner(Qt::TopRightCorner,    Qt::RightDockWidgetArea);
-    setCorner(Qt::BottomLeftCorner,  Qt::LeftDockWidgetArea);
-    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+    setCorner(Qt::BottomLeftCorner,  Qt::BottomDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
 
     // --- Top dock: Chart tabs (BarChart / Thumbnails / AreaChart) -----------
     auto* chartDock = new QDockWidget(tr("Charts"), this);
@@ -173,6 +177,162 @@ void MainWindow::setupDocks() {
 
     // Stack the two right-side docks vertically.
     splitDockWidget(mvDock, cuDock, Qt::Vertical);
+
+    setupBottomDocks();
+}
+
+// Helper used by setupDocks() — creates a monospace QPlainTextEdit preloaded
+// with some placeholder text. Used for Hex Viewer / Message / Comment tabs.
+static QPlainTextEdit* makeMonoEdit(const QString& initial, QWidget* parent) {
+    auto* edit = new QPlainTextEdit(parent);
+    edit->setReadOnly(true);
+    edit->setLineWrapMode(QPlainTextEdit::NoWrap);
+    QFont mono(QStringLiteral("Menlo"));
+    mono.setStyleHint(QFont::Monospace);
+    mono.setPointSize(9);
+    edit->setFont(mono);
+    edit->setPlainText(initial);
+    return edit;
+}
+
+void MainWindow::setupBottomDocks() {
+    // --- Bottom-left dock: Stream Viewer -----------------------------------
+    // A NAL-unit / syntax-element listing. Implemented as a QTreeView backed
+    // by a QStandardItemModel with mock bitstream entries.
+    auto* streamDock = new QDockWidget(tr("Stream Viewer"), this);
+    streamDock->setObjectName(QStringLiteral("StreamViewerDock"));
+    auto* streamTree = new QTreeView(streamDock);
+    {
+        auto* model = new QStandardItemModel(streamTree);
+        model->setHorizontalHeaderLabels(
+            {tr("#"), tr("offset"), tr("nal unit type"), tr("size")});
+
+        struct NalRow { int idx; qint64 offset; const char* type; int size; };
+        static const NalRow kNals[] = {
+            { 0, 0x00000000, "VPS_NUT",                12 },
+            { 1, 0x0000000c, "SPS_NUT",                24 },
+            { 2, 0x00000024, "PPS_NUT",                 8 },
+            { 3, 0x0000002c, "PREFIX_SEI_NUT",        236 },
+            { 4, 0x00000118, "IDR_W_RADL (I-slice)", 53482 },
+            { 5, 0x0000d1a2, "TRAIL_R (P-slice)",    14017 },
+            { 6, 0x00010843, "TRAIL_N (B-slice)",     4258 },
+            { 7, 0x000118e5, "TRAIL_N (B-slice)",     3935 },
+            { 8, 0x00012840, "TRAIL_R (P-slice)",    14121 },
+            { 9, 0x000160d9, "TRAIL_N (B-slice)",     4471 },
+            {10, 0x00017230, "TRAIL_N (B-slice)",     3912 },
+            {11, 0x00018178, "TRAIL_R (P-slice)",    13887 },
+        };
+        for (const auto& n : kNals) {
+            auto* idx  = new QStandardItem(QString::number(n.idx));
+            auto* off  = new QStandardItem(
+                QStringLiteral("0x%1").arg(n.offset, 8, 16, QChar('0')));
+            auto* type = new QStandardItem(QLatin1String(n.type));
+            auto* size = new QStandardItem(QString::number(n.size));
+            for (auto* it : {idx, off, type, size}) it->setEditable(false);
+            model->appendRow({idx, off, type, size});
+        }
+        streamTree->setModel(model);
+        streamTree->setAlternatingRowColors(true);
+        streamTree->setRootIsDecorated(false);
+        streamTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        streamTree->header()->setStretchLastSection(true);
+        streamTree->setUniformRowHeights(true);
+    }
+    streamDock->setWidget(streamTree);
+    streamDock->setMinimumHeight(140);
+    addDockWidget(Qt::BottomDockWidgetArea, streamDock);
+
+    // --- Bottom-right dock: Hex Viewer / DPB / Message / Buffer / Comment ---
+    auto* bitstreamDock = new QDockWidget(tr("Bitstream"), this);
+    bitstreamDock->setObjectName(QStringLiteral("BitstreamDock"));
+    auto* tabs = new QTabWidget(bitstreamDock);
+    tabs->setDocumentMode(true);
+    tabs->setTabPosition(QTabWidget::South);
+
+    // Hex Viewer tab -------------------------------------------------------
+    const QString hexDump = QStringLiteral(
+        "00000000  00 00 00 01 40 01 0c 01  ff ff 01 60 00 00 03 00  ....@......`....\n"
+        "00000010  80 00 00 03 00 00 03 00  99 ac 0c 00 00 00 01 42  ...............B\n"
+        "00000020  01 01 01 60 00 00 03 00  80 00 00 03 00 00 03 00  ...`............\n"
+        "00000030  99 a0 02 80 80 2d 16 59  59 a4 93 2b 9a 80 80 80  .....-.YY..+....\n"
+        "00000040  81 00 00 00 01 44 01 c1  72 b4 62 40 00 00 00 01  .....D..r.b@....\n"
+        "00000050  4e 01 05 0a 72 cb f3 96  71 80 12 34 56 78 9a bc  N...r...q..4Vx..\n"
+        "00000060  de f0 80 00 00 00 01 26  01 af 04 9c 26 e1 3f 74  .......&....&.?t\n"
+        "00000070  7e 12 c8 24 19 0d a7 18  c0 00 00 00 00 00 00 00  ~..$............\n"
+        "00000080  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................\n"
+        "00000090  ...");
+    tabs->addTab(makeMonoEdit(hexDump, tabs), tr("Hex Viewer"));
+
+    // DPB tab --------------------------------------------------------------
+    auto* dpbTree = new QTreeView(tabs);
+    {
+        auto* model = new QStandardItemModel(dpbTree);
+        model->setHorizontalHeaderLabels(
+            {tr("slot"), tr("poc"), tr("type"), tr("is_ref"), tr("used_for")});
+        struct DpbRow { int slot; int poc; const char* type; const char* ref;
+                        const char* used; };
+        static const DpbRow kDpb[] = {
+            {0, 48, "P",      "yes", "short-term"},
+            {1, 44, "P",      "yes", "short-term"},
+            {2, 40, "I",      "yes", "long-term" },
+            {3, 49, "B",      "no",  "output"    },
+            {4, 50, "B",      "no",  "output"    },
+            {5, 51, "B",      "no",  "(empty)"   },
+            {6, 52, "(free)", "-",   "-"         },
+            {7, 53, "(free)", "-",   "-"         },
+        };
+        for (const auto& r : kDpb) {
+            auto* s = new QStandardItem(QString::number(r.slot));
+            auto* p = new QStandardItem(QString::number(r.poc));
+            auto* t = new QStandardItem(QLatin1String(r.type));
+            auto* i = new QStandardItem(QLatin1String(r.ref));
+            auto* u = new QStandardItem(QLatin1String(r.used));
+            for (auto* it : {s, p, t, i, u}) it->setEditable(false);
+            model->appendRow({s, p, t, i, u});
+        }
+        dpbTree->setModel(model);
+        dpbTree->setAlternatingRowColors(true);
+        dpbTree->setRootIsDecorated(false);
+        dpbTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        dpbTree->header()->setStretchLastSection(true);
+        dpbTree->setUniformRowHeights(true);
+    }
+    tabs->addTab(dpbTree, tr("DPB"));
+
+    // Message tab ----------------------------------------------------------
+    const QString msg = QStringLiteral(
+        "[info]  Stream opened: /Volumes/4test/test_265.265\n"
+        "[info]  Container: raw HEVC annex-B\n"
+        "[info]  VPS id=0 max_sub_layers=1 profile=Main level=3.1\n"
+        "[info]  SPS id=0 chroma_format=4:2:0 bit_depth=8 1280x720\n"
+        "[info]  PPS id=0 entropy_coding=CABAC\n"
+        "[warn] picture 157: CRA with no preceding IDR (handled)\n"
+        "[info]  decode finished: 250 frames, 10.000 s\n"
+        "[info]  PSNR(y) avg 43.331 dB");
+    tabs->addTab(makeMonoEdit(msg, tabs), tr("Message"));
+
+    // Buffer tab -----------------------------------------------------------
+    const QString buf = QStringLiteral(
+        "cpb_buffer_size    : 11 000 000 bits\n"
+        "initial_cpb_removal: 90000 (1.00 s)\n"
+        "cpb_fullness       : 7 842 110 bits  (71.3 %)\n"
+        "dpb_max_num_reorder: 2\n"
+        "dpb_max_latency    : 3\n"
+        "hrd_conformance    : ok\n");
+    tabs->addTab(makeMonoEdit(buf, tabs), tr("Buffer"));
+
+    // Comment tab ----------------------------------------------------------
+    auto* commentEdit = makeMonoEdit(QString{}, tabs);
+    commentEdit->setReadOnly(false);
+    commentEdit->setPlaceholderText(tr("Type a comment for this bitstream…"));
+    tabs->addTab(commentEdit, tr("Comment"));
+
+    bitstreamDock->setWidget(tabs);
+    bitstreamDock->setMinimumHeight(140);
+    addDockWidget(Qt::BottomDockWidgetArea, bitstreamDock);
+
+    // Place the two bottom docks side-by-side.
+    splitDockWidget(streamDock, bitstreamDock, Qt::Horizontal);
 }
 
 void MainWindow::setupToolbarAndMenu() {
