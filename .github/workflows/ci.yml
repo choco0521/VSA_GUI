@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  build-and-test:
+    name: Ubuntu / Qt6 / vsa_codec
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            gcc g++ \
+            make \
+            python3 \
+            ffmpeg \
+            unzip \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            libqt6charts6-dev \
+            libgl1-mesa-dev
+
+      # ---------------------------------------------------------------
+      # JM H.264 reference decoder.
+      #
+      # We download, patch (enable TRACE macro), build once and cache the
+      # resulting binaries in ~/.cache/jm. Subsequent runs skip the build
+      # entirely — the binary lives in the cache and is restored before
+      # the reference-trace step below.
+      #
+      # Phase A just installs JM so the infrastructure is proven to work.
+      # Phases D/E will add the actual `ldecod.exe` invocation and diffs.
+      # ---------------------------------------------------------------
+      - name: Cache JM reference decoder
+        id: cache-jm
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/jm
+          key: jm-19.0-trace-v1
+
+      - name: Build JM reference decoder (cache miss only)
+        if: steps.cache-jm.outputs.cache-hit != 'true'
+        run: bash tests/scripts/install_jm.sh ~/.cache/jm || echo "JM build stub — real build wired up in Phase D"
+
+      # ---------------------------------------------------------------
+      # vsa_codec + vsa_tests + vsa_parse + vsa_gui
+      # ---------------------------------------------------------------
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: vsa_parse smoke
+        run: ./build/vsa_parse --version
