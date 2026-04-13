@@ -73,7 +73,9 @@ void BarChartView::rebuild() {
     m_barSeries->attachAxis(m_xAxis);
 
     m_yAxis = new QValueAxis;
-    m_yAxis->setRange(0, maxSize * 1.1);
+    // Show only the bottom quarter of the data range (0 .. maxSize/4) so the
+    // tall I-frame spikes are clipped and the small B/P bars become readable.
+    m_yAxis->setRange(0, maxSize * 0.25);
     m_yAxis->setLabelFormat(QStringLiteral("%i"));
     chart->addAxis(m_yAxis, Qt::AlignLeft);
     m_barSeries->attachAxis(m_yAxis);
