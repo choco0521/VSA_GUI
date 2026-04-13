@@ -123,10 +123,14 @@ void MainWindow::setupCentralLayout() {
 }
 
 void MainWindow::setupDocks() {
-    // Configure corners so the Top dock spans the full window width and
-    // sits above both the Left and Right docks (like the reference layout).
+    // Configure corners so:
+    //   - Top dock (charts) spans from the left edge over the Full-stream
+    //     dock, but stops at the right dock (Motion Vectors / Block Presenter).
+    //   - Right dock (Motion Vectors) extends all the way up to the top of
+    //     the window, sitting next to the BarChart on the same row — this
+    //     matches the reference StreamEye layout.
     setCorner(Qt::TopLeftCorner,     Qt::TopDockWidgetArea);
-    setCorner(Qt::TopRightCorner,    Qt::TopDockWidgetArea);
+    setCorner(Qt::TopRightCorner,    Qt::RightDockWidgetArea);
     setCorner(Qt::BottomLeftCorner,  Qt::LeftDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
 
