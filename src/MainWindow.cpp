@@ -155,17 +155,17 @@ void MainWindow::setupDocks() {
     streamDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::LeftDockWidgetArea, streamDock);
 
-    // --- Right (top) dock: Motion-vector viewer ---
-    auto* mvDock = new QDockWidget(tr("Motion Vectors"), this);
-    mvDock->setObjectName(QStringLiteral("MotionVectorDock"));
+    // --- Right (top) dock: Block Presenter (motion-vector viewer) ---
+    auto* mvDock = new QDockWidget(tr("Block Presenter"), this);
+    mvDock->setObjectName(QStringLiteral("BlockPresenterDock"));
     m_mvView = new MotionVectorView(mvDock);
     mvDock->setWidget(m_mvView);
     mvDock->setMinimumWidth(220);
     addDockWidget(Qt::RightDockWidgetArea, mvDock);
 
-    // --- Right (bottom) dock: Coding-unit info tree ---
-    auto* cuDock = new QDockWidget(tr("Coding Unit"), this);
-    cuDock->setObjectName(QStringLiteral("CodingUnitDock"));
+    // --- Right (bottom) dock: Block Info (coding-unit info tree) ---
+    auto* cuDock = new QDockWidget(tr("Block Info"), this);
+    cuDock->setObjectName(QStringLiteral("BlockInfoDock"));
     m_codingUnitTree = new CodingUnitTree(cuDock);
     cuDock->setWidget(m_codingUnitTree);
     cuDock->setMinimumWidth(220);
