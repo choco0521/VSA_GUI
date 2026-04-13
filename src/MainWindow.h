@@ -5,6 +5,8 @@
 #include <QLabel>
 #include <QMainWindow>
 
+class QTreeView;
+
 namespace vsa {
 
 class StreamInfoTree;
@@ -53,6 +55,7 @@ private:
     VideoPreviewWidget* m_videoPreview    = nullptr;
     BitrateCurveView*   m_bitrateCurve    = nullptr;
     ViewModeSelector*   m_viewModeSelector = nullptr;
+    QTreeView*          m_sourceInfoTree  = nullptr;
 
     // Dock widgets
     StreamInfoTree*   m_streamInfoTree = nullptr;
@@ -63,17 +66,18 @@ private:
     MainToolbar* m_mainToolbar = nullptr;
 
     // Status bar labels
-    QLabel* m_statusPathLabel  = nullptr;
-    QLabel* m_statusPsnrLabel  = nullptr;
-    QLabel* m_statusBlockLabel = nullptr;
-    QLabel* m_statusStrmLabel  = nullptr;
-    QLabel* m_statusDispLabel  = nullptr;
-    QLabel* m_statusTypeLabel  = nullptr;
-    QLabel* m_statusSizeLabel  = nullptr;
+    QLabel* m_statusPathLabel   = nullptr;
+    QLabel* m_statusPsnrLabel   = nullptr;
+    QLabel* m_statusBlockLabel  = nullptr;
+    QLabel* m_statusSubLabel    = nullptr;
+    QLabel* m_statusStrmLabel   = nullptr;
+    QLabel* m_statusDispLabel   = nullptr;
+    QLabel* m_statusTypeLabel   = nullptr;
+    QLabel* m_statusSizeLabel   = nullptr;
     QLabel* m_statusOffsetLabel = nullptr;
 
-    int m_currentFrame      = 0;
-    int m_currentCodingUnit = 0;
+    int m_currentFrame      = -1;
+    int m_currentCodingUnit = -1;
 };
 
 } // namespace vsa

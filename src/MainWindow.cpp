@@ -10,11 +10,17 @@
 #include "widgets/ViewModeSelector.h"
 
 #include <QDockWidget>
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QHeaderView>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMenuBar>
 #include <QSplitter>
+#include <QStandardItem>
+#include <QStandardItemModel>
 #include <QStatusBar>
+#include <QTreeView>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -49,7 +55,13 @@ void MainWindow::setupDataModel() {
 }
 
 void MainWindow::setupCentralLayout() {
-    // Central column = Chart tabs  ⟶  Video preview  ⟶  bitrate curve
+    // Central column now holds:
+    //   Video preview (top, large)
+    //   View-mode selector (thin row)
+    //   Horizontal split: [source info table | bitrate curve]
+    //
+    // The chart tabs (BarChart / Thumbnails / AreaChart) are attached to the
+    // top dock area in setupDocks() so they span the full window width.
     auto* central = new QWidget(this);
     auto* layout  = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -57,36 +69,84 @@ void MainWindow::setupCentralLayout() {
 
     auto* vSplit = new QSplitter(Qt::Vertical, central);
 
-    m_chartTabs    = new ChartTabWidget(&m_data, vSplit);
     m_videoPreview = new VideoPreviewWidget(&m_data, vSplit);
 
-    // Bottom block = view-mode selector on top of the bitrate curve.
     auto* bottom  = new QWidget(vSplit);
     auto* bottomL = new QVBoxLayout(bottom);
     bottomL->setContentsMargins(0, 0, 0, 0);
     bottomL->setSpacing(0);
-    m_viewModeSelector = new ViewModeSelector(bottom);
-    m_bitrateCurve     = new BitrateCurveView(&m_data, bottom);
-    bottomL->addWidget(m_viewModeSelector);
-    bottomL->addWidget(m_bitrateCurve, 1);
 
-    vSplit->addWidget(m_chartTabs);
+    m_viewModeSelector = new ViewModeSelector(bottom);
+    bottomL->addWidget(m_viewModeSelector);
+
+    auto* bottomSplit = new QSplitter(Qt::Horizontal, bottom);
+
+    // --- Source info tree (name / value) -----------------------------------
+    m_sourceInfoTree = new QTreeView(bottomSplit);
+    {
+        auto* model = new QStandardItemModel(m_sourceInfoTree);
+        model->setHorizontalHeaderLabels({tr("name"), tr("value")});
+        auto addRow = [&](const QString& name, const QString& val) {
+            auto* n = new QStandardItem(name);
+            auto* v = new QStandardItem(val);
+            n->setEditable(false);
+            v->setEditable(false);
+            model->appendRow({n, v});
+        };
+        addRow(QStringLiteral("source"),          QStringLiteral("level/main"));
+        addRow(QStringLiteral("cpb_buffer_size"), QStringLiteral("11 000 000"));
+        addRow(QStringLiteral("bitrate"),         QStringLiteral("11 000 000"));
+        addRow(QStringLiteral("cbr_flag"),        QStringLiteral("0"));
+        m_sourceInfoTree->setModel(model);
+        m_sourceInfoTree->setAlternatingRowColors(true);
+        m_sourceInfoTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        m_sourceInfoTree->setRootIsDecorated(false);
+        m_sourceInfoTree->header()->setStretchLastSection(true);
+        m_sourceInfoTree->setMinimumWidth(180);
+    }
+
+    m_bitrateCurve = new BitrateCurveView(&m_data, bottomSplit);
+
+    bottomSplit->addWidget(m_sourceInfoTree);
+    bottomSplit->addWidget(m_bitrateCurve);
+    bottomSplit->setStretchFactor(0, 1);
+    bottomSplit->setStretchFactor(1, 4);
+    bottomL->addWidget(bottomSplit, 1);
+
     vSplit->addWidget(m_videoPreview);
     vSplit->addWidget(bottom);
-    vSplit->setStretchFactor(0, 2);
-    vSplit->setStretchFactor(1, 5);
-    vSplit->setStretchFactor(2, 2);
+    vSplit->setStretchFactor(0, 3);
+    vSplit->setStretchFactor(1, 1);
 
     layout->addWidget(vSplit);
     setCentralWidget(central);
 }
 
 void MainWindow::setupDocks() {
+    // Configure corners so the Top dock spans the full window width and
+    // sits above both the Left and Right docks (like the reference layout).
+    setCorner(Qt::TopLeftCorner,     Qt::TopDockWidgetArea);
+    setCorner(Qt::TopRightCorner,    Qt::TopDockWidgetArea);
+    setCorner(Qt::BottomLeftCorner,  Qt::LeftDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+
+    // --- Top dock: Chart tabs (BarChart / Thumbnails / AreaChart) -----------
+    auto* chartDock = new QDockWidget(tr("Charts"), this);
+    chartDock->setObjectName(QStringLiteral("ChartsDock"));
+    chartDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    chartDock->setTitleBarWidget(new QWidget(chartDock));   // hide title bar
+    m_chartTabs = new ChartTabWidget(&m_data, chartDock);
+    m_chartTabs->setMinimumHeight(180);
+    chartDock->setWidget(m_chartTabs);
+    chartDock->setAllowedAreas(Qt::TopDockWidgetArea);
+    addDockWidget(Qt::TopDockWidgetArea, chartDock);
+
     // --- Left dock: Stream info tree ---
     auto* streamDock = new QDockWidget(tr("Full stream"), this);
     streamDock->setObjectName(QStringLiteral("StreamInfoDock"));
     m_streamInfoTree = new StreamInfoTree(streamDock);
     m_streamInfoTree->setStreamInfo(m_data.stream(), m_data.frames());
+    m_streamInfoTree->setMinimumWidth(230);
     streamDock->setWidget(m_streamInfoTree);
     streamDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::LeftDockWidgetArea, streamDock);
@@ -96,6 +156,7 @@ void MainWindow::setupDocks() {
     mvDock->setObjectName(QStringLiteral("MotionVectorDock"));
     m_mvView = new MotionVectorView(mvDock);
     mvDock->setWidget(m_mvView);
+    mvDock->setMinimumWidth(220);
     addDockWidget(Qt::RightDockWidgetArea, mvDock);
 
     // --- Right (bottom) dock: Coding-unit info tree ---
@@ -103,6 +164,7 @@ void MainWindow::setupDocks() {
     cuDock->setObjectName(QStringLiteral("CodingUnitDock"));
     m_codingUnitTree = new CodingUnitTree(cuDock);
     cuDock->setWidget(m_codingUnitTree);
+    cuDock->setMinimumWidth(220);
     addDockWidget(Qt::RightDockWidgetArea, cuDock);
 
     // Stack the two right-side docks vertically.
@@ -138,20 +200,32 @@ void MainWindow::setupToolbarAndMenu() {
 void MainWindow::setupStatusBar() {
     auto* sb = statusBar();
 
-    m_statusPathLabel  = new QLabel(QStringLiteral("stop"), sb);
-    m_statusPsnrLabel  = new QLabel(QStringLiteral("PSNR (yuv.dec/ref) "), sb);
-    m_statusBlockLabel = new QLabel(QStringLiteral("Blk —"), sb);
-    m_statusStrmLabel  = new QLabel(QStringLiteral("Strm —"), sb);
-    m_statusDispLabel  = new QLabel(QStringLiteral("Disp —"), sb);
-    m_statusTypeLabel  = new QLabel(QStringLiteral("Type —"), sb);
-    m_statusSizeLabel  = new QLabel(QStringLiteral("Size —"), sb);
+    m_statusPathLabel   = new QLabel(QStringLiteral("stop"), sb);
+    m_statusPsnrLabel   = new QLabel(QStringLiteral("PSNR (yuv.dec/ref) "), sb);
+    m_statusBlockLabel  = new QLabel(QStringLiteral("Blk —"), sb);
+    m_statusSubLabel    = new QLabel(QStringLiteral("Sub —"), sb);
+    m_statusStrmLabel   = new QLabel(QStringLiteral("Strm —"), sb);
+    m_statusDispLabel   = new QLabel(QStringLiteral("Disp —"), sb);
+    m_statusTypeLabel   = new QLabel(QStringLiteral("Type —"), sb);
+    m_statusSizeLabel   = new QLabel(QStringLiteral("Size —"), sb);
     m_statusOffsetLabel = new QLabel(QStringLiteral("Offset —"), sb);
+
+    auto sep = [sb]() -> QFrame* {
+        auto* f = new QFrame(sb);
+        f->setFrameShape(QFrame::VLine);
+        f->setFrameShadow(QFrame::Sunken);
+        return f;
+    };
 
     sb->addWidget(m_statusPathLabel);
     sb->addPermanentWidget(m_statusPsnrLabel);
+    sb->addPermanentWidget(sep());
     sb->addPermanentWidget(m_statusBlockLabel);
+    sb->addPermanentWidget(m_statusSubLabel);
+    sb->addPermanentWidget(sep());
     sb->addPermanentWidget(m_statusStrmLabel);
     sb->addPermanentWidget(m_statusDispLabel);
+    sb->addPermanentWidget(sep());
     sb->addPermanentWidget(m_statusTypeLabel);
     sb->addPermanentWidget(m_statusSizeLabel);
     sb->addPermanentWidget(m_statusOffsetLabel);
@@ -226,9 +300,11 @@ void MainWindow::refreshStatusBar() {
     if (m_currentFrame < 0 || m_currentFrame >= m_data.frameCount()) return;
     const auto& f = m_data.frames().at(m_currentFrame);
     m_statusPsnrLabel->setText(
-        QStringLiteral("PSNR y %1").arg(f.psnrY, 0, 'f', 3));
+        QStringLiteral("PSNR y %1").arg(f.psnrY, 0, 'f', 4));
     m_statusBlockLabel->setText(
-        QStringLiteral("Blk %1").arg(f.codingUnits.size()));
+        QStringLiteral("Blk %1").arg(f.psnrY, 0, 'f', 4));
+    m_statusSubLabel->setText(
+        QStringLiteral("Sub %1").arg(f.psnrY, 0, 'f', 4));
     m_statusStrmLabel->setText(QStringLiteral("Strm %1").arg(f.streamIdx));
     m_statusDispLabel->setText(QStringLiteral("Disp %1").arg(f.displayIdx));
     m_statusTypeLabel->setText(QStringLiteral("Type %1").arg(f.type));
