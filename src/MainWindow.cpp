@@ -58,21 +58,40 @@ void MainWindow::setupDataModel() {
 }
 
 void MainWindow::setupCentralLayout() {
-    // Central column now holds just the video preview with the view-mode
-    // selector (Decoded / Predicted / Unfiltered / Residual / Reference)
-    // underneath it. The chart tabs sit in the top dock, and bitstream /
-    // coding-unit info live in the side and bottom docks.
+    // Central column = vertical splitter containing:
+    //   Top    : Video preview + Decoded/Predicted/… view-mode selector
+    //   Bottom : Hex Viewer / DPB / Message / Buffer / Comments tab widget
+    //
+    // The bitstream tabs used to live in a Bottom dock; they have been
+    // moved into the central widget so they sit between the video preview
+    // and the bottom of the window — and so the left (Stream / Stream
+    // Viewer) and right (Block Presenter / Block Info) docks can extend
+    // from the top of the window all the way down to the bottom.
     auto* central = new QWidget(this);
     auto* layout  = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    m_videoPreview     = new VideoPreviewWidget(&m_data, central);
-    m_viewModeSelector = new ViewModeSelector(central);
+    auto* vSplit = new QSplitter(Qt::Vertical, central);
 
-    layout->addWidget(m_videoPreview, 1);
-    layout->addWidget(m_viewModeSelector);
+    auto* videoArea = new QWidget(vSplit);
+    auto* videoL    = new QVBoxLayout(videoArea);
+    videoL->setContentsMargins(0, 0, 0, 0);
+    videoL->setSpacing(0);
+    m_videoPreview     = new VideoPreviewWidget(&m_data, videoArea);
+    m_viewModeSelector = new ViewModeSelector(videoArea);
+    videoL->addWidget(m_videoPreview, 1);
+    videoL->addWidget(m_viewModeSelector);
 
+    auto* bitstreamTabs = createBitstreamTabs(vSplit);
+    bitstreamTabs->setMinimumHeight(140);
+
+    vSplit->addWidget(videoArea);
+    vSplit->addWidget(bitstreamTabs);
+    vSplit->setStretchFactor(0, 3);
+    vSplit->setStretchFactor(1, 1);
+
+    layout->addWidget(vSplit);
     setCentralWidget(central);
 }
 
@@ -80,14 +99,15 @@ void MainWindow::setupDocks() {
     // Configure corners so:
     //   - Top dock (charts) spans from the left edge over the Stream dock,
     //     but stops at the right dock (Block Presenter / Block Info).
-    //   - Right dock (Block Presenter / Block Info) extends from the top
-    //     of the window all the way down to the bottom — Block Info fills
-    //     the full vertical right column.
-    //   - Bottom dock (Bitstream tabs) spans only between the left column
-    //     and the right column.
+    //   - Left dock column (Stream / Stream Viewer) extends from the top
+    //     of the window all the way down to the bottom.
+    //   - Right dock column (Block Presenter / Block Info) extends from
+    //     the top of the window all the way down to the bottom.
+    //   - There is no Bottom dock area — the Hex Viewer / DPB / Message /
+    //     Buffer / Comments tabs live in the central widget instead.
     setCorner(Qt::TopLeftCorner,     Qt::TopDockWidgetArea);
     setCorner(Qt::TopRightCorner,    Qt::RightDockWidgetArea);
-    setCorner(Qt::BottomLeftCorner,  Qt::BottomDockWidgetArea);
+    setCorner(Qt::BottomLeftCorner,  Qt::LeftDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
 
     // --- Top dock: Chart tabs (BarChart / Thumbnails / AreaChart) -----------
@@ -196,6 +216,9 @@ void MainWindow::setupDocks() {
 
     // Stack Stream (top) over Stream Viewer (bottom) on the left.
     splitDockWidget(streamDock, streamViewerDock, Qt::Vertical);
+    // Give Stream the lion's share of the left column (Stream Viewer
+    // gets the smaller bottom portion).
+    resizeDocks({streamDock, streamViewerDock}, {520, 220}, Qt::Vertical);
 
     // --- Right (top) dock: Block Presenter (motion-vector viewer) ---
     auto* mvDock = new QDockWidget(tr("Block Presenter"), this);
@@ -234,10 +257,13 @@ static QPlainTextEdit* makeMonoEdit(const QString& initial, QWidget* parent) {
 }
 
 void MainWindow::setupBottomDocks() {
-    // --- Bottom dock: Hex Viewer / DPB / Message / Buffer / Comment --------
-    auto* bitstreamDock = new QDockWidget(tr("Bitstream"), this);
-    bitstreamDock->setObjectName(QStringLiteral("BitstreamDock"));
-    auto* tabs = new QTabWidget(bitstreamDock);
+    // No bottom docks — the Hex Viewer / DPB / Message / Buffer / Comment
+    // tab widget now lives inside the central widget, between the video
+    // preview and the bottom of the window.
+}
+
+QTabWidget* MainWindow::createBitstreamTabs(QWidget* parent) {
+    auto* tabs = new QTabWidget(parent);
     tabs->setDocumentMode(true);
     tabs->setTabPosition(QTabWidget::South);
 
@@ -313,15 +339,13 @@ void MainWindow::setupBottomDocks() {
         "hrd_conformance    : ok\n");
     tabs->addTab(makeMonoEdit(buf, tabs), tr("Buffer"));
 
-    // Comment tab ----------------------------------------------------------
+    // Comments tab ---------------------------------------------------------
     auto* commentEdit = makeMonoEdit(QString{}, tabs);
     commentEdit->setReadOnly(false);
     commentEdit->setPlaceholderText(tr("Type a comment for this bitstream…"));
-    tabs->addTab(commentEdit, tr("Comment"));
+    tabs->addTab(commentEdit, tr("Comments"));
 
-    bitstreamDock->setWidget(tabs);
-    bitstreamDock->setMinimumHeight(140);
-    addDockWidget(Qt::BottomDockWidgetArea, bitstreamDock);
+    return tabs;
 }
 
 void MainWindow::setupToolbarAndMenu() {

@@ -5,6 +5,9 @@
 #include <QLabel>
 #include <QMainWindow>
 
+class QTabWidget;
+class QWidget;
+
 namespace vsa {
 
 class StreamInfoTree;
@@ -41,6 +44,7 @@ private:
     void setupCentralLayout();
     void setupDocks();
     void setupBottomDocks();
+    QTabWidget* createBitstreamTabs(QWidget* parent);
     void setupToolbarAndMenu();
     void setupStatusBar();
     void wireSignals();
