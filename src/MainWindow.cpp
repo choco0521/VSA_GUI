@@ -96,15 +96,14 @@ void MainWindow::setupDocks() {
     chartDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     chartDock->setTitleBarWidget(new QWidget(chartDock));   // hide title bar
     m_chartTabs = new ChartTabWidget(&m_data, chartDock);
-    m_chartTabs->setMinimumHeight(150);
-    m_chartTabs->setMaximumHeight(190);
+    m_chartTabs->setFixedHeight(110);
     chartDock->setWidget(m_chartTabs);
     chartDock->setAllowedAreas(Qt::TopDockWidgetArea);
     addDockWidget(Qt::TopDockWidgetArea, chartDock);
-    // Slim chart strip — just tall enough for the tab bar, the chart title
-    // and a couple of Y-axis tick labels (matches the user-supplied
-    // reference proportion).
-    resizeDocks({chartDock}, {170}, Qt::Vertical);
+    // The dock itself is hard-clamped to the same height so it cannot
+    // grow when the splitter is resized.
+    chartDock->setFixedHeight(110);
+    resizeDocks({chartDock}, {110}, Qt::Vertical);
 
     // --- Left dock (top): Stream panel with 6 tabs -------------------------
     // The "Stream" tab hosts the existing StreamInfoTree. The other five
