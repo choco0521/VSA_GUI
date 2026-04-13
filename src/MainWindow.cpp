@@ -1,6 +1,5 @@
 #include "MainWindow.h"
 
-#include "views/BitrateCurveView.h"
 #include "views/ChartTabWidget.h"
 #include "views/CodingUnitTree.h"
 #include "views/MotionVectorView.h"
@@ -58,85 +57,37 @@ void MainWindow::setupDataModel() {
 }
 
 void MainWindow::setupCentralLayout() {
-    // Central column now holds:
-    //   Video preview (top, large)
-    //   View-mode selector (thin row)
-    //   Horizontal split: [source info table | bitrate curve]
-    //
-    // The chart tabs (BarChart / Thumbnails / AreaChart) are attached to the
-    // top dock area in setupDocks() so they span the full window width.
+    // Central column now holds just the video preview with the view-mode
+    // selector (Decoded / Predicted / Unfiltered / Residual / Reference)
+    // underneath it. The chart tabs sit in the top dock, and bitstream /
+    // coding-unit info live in the side and bottom docks.
     auto* central = new QWidget(this);
     auto* layout  = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    auto* vSplit = new QSplitter(Qt::Vertical, central);
+    m_videoPreview     = new VideoPreviewWidget(&m_data, central);
+    m_viewModeSelector = new ViewModeSelector(central);
 
-    m_videoPreview = new VideoPreviewWidget(&m_data, vSplit);
+    layout->addWidget(m_videoPreview, 1);
+    layout->addWidget(m_viewModeSelector);
 
-    auto* bottom  = new QWidget(vSplit);
-    auto* bottomL = new QVBoxLayout(bottom);
-    bottomL->setContentsMargins(0, 0, 0, 0);
-    bottomL->setSpacing(0);
-
-    m_viewModeSelector = new ViewModeSelector(bottom);
-    bottomL->addWidget(m_viewModeSelector);
-
-    auto* bottomSplit = new QSplitter(Qt::Horizontal, bottom);
-
-    // --- Source info tree (name / value) -----------------------------------
-    m_sourceInfoTree = new QTreeView(bottomSplit);
-    {
-        auto* model = new QStandardItemModel(m_sourceInfoTree);
-        model->setHorizontalHeaderLabels({tr("name"), tr("value")});
-        auto addRow = [&](const QString& name, const QString& val) {
-            auto* n = new QStandardItem(name);
-            auto* v = new QStandardItem(val);
-            n->setEditable(false);
-            v->setEditable(false);
-            model->appendRow({n, v});
-        };
-        addRow(QStringLiteral("source"),          QStringLiteral("level/main"));
-        addRow(QStringLiteral("cpb_buffer_size"), QStringLiteral("11 000 000"));
-        addRow(QStringLiteral("bitrate"),         QStringLiteral("11 000 000"));
-        addRow(QStringLiteral("cbr_flag"),        QStringLiteral("0"));
-        m_sourceInfoTree->setModel(model);
-        m_sourceInfoTree->setAlternatingRowColors(true);
-        m_sourceInfoTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        m_sourceInfoTree->setRootIsDecorated(false);
-        m_sourceInfoTree->header()->setStretchLastSection(true);
-        m_sourceInfoTree->setMinimumWidth(180);
-    }
-
-    m_bitrateCurve = new BitrateCurveView(&m_data, bottomSplit);
-
-    bottomSplit->addWidget(m_sourceInfoTree);
-    bottomSplit->addWidget(m_bitrateCurve);
-    bottomSplit->setStretchFactor(0, 1);
-    bottomSplit->setStretchFactor(1, 4);
-    bottomL->addWidget(bottomSplit, 1);
-
-    vSplit->addWidget(m_videoPreview);
-    vSplit->addWidget(bottom);
-    vSplit->setStretchFactor(0, 3);
-    vSplit->setStretchFactor(1, 1);
-
-    layout->addWidget(vSplit);
     setCentralWidget(central);
 }
 
 void MainWindow::setupDocks() {
     // Configure corners so:
-    //   - Top dock (charts) spans from the left edge over the Full-stream
-    //     dock, but stops at the right dock (Block Presenter / Block Info).
-    //   - Right dock (Block Presenter) extends up to the top of the window,
-    //     sitting next to the BarChart on the same row.
-    //   - Bottom dock (Stream Viewer / Hex-DPB-Message-Buffer-Comment)
-    //     spans the full window width below every other dock.
+    //   - Top dock (charts) spans from the left edge over the Stream dock,
+    //     but stops at the right dock (Block Presenter / Block Info).
+    //   - Right dock (Block Presenter / Block Info) extends from the top
+    //     of the window all the way down to the bottom — Block Info fills
+    //     the full vertical right column.
+    //   - Bottom dock (Bitstream tabs) spans only between the left column
+    //     and the right column.
     setCorner(Qt::TopLeftCorner,     Qt::TopDockWidgetArea);
     setCorner(Qt::TopRightCorner,    Qt::RightDockWidgetArea);
     setCorner(Qt::BottomLeftCorner,  Qt::BottomDockWidgetArea);
-    setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
 
     // --- Top dock: Chart tabs (BarChart / Thumbnails / AreaChart) -----------
     auto* chartDock = new QDockWidget(tr("Charts"), this);
@@ -434,8 +385,6 @@ void MainWindow::wireSignals() {
             m_chartTabs, &ChartTabWidget::setCurrentFrame);
     connect(this, &MainWindow::currentFrameChanged,
             m_videoPreview, &VideoPreviewWidget::setCurrentFrame);
-    connect(this, &MainWindow::currentFrameChanged,
-            m_bitrateCurve, &BitrateCurveView::setCurrentFrame);
     connect(this, &MainWindow::currentFrameChanged,
             m_streamInfoTree, &StreamInfoTree::onCurrentFrameChanged);
 

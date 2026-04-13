@@ -5,15 +5,12 @@
 #include <QLabel>
 #include <QMainWindow>
 
-class QTreeView;
-
 namespace vsa {
 
 class StreamInfoTree;
 class CodingUnitTree;
 class ChartTabWidget;
 class VideoPreviewWidget;
-class BitrateCurveView;
 class ViewModeSelector;
 class MotionVectorView;
 class MainToolbar;
@@ -52,11 +49,9 @@ private:
     MockDataProvider  m_data;
 
     // Central widgets
-    ChartTabWidget*     m_chartTabs       = nullptr;
-    VideoPreviewWidget* m_videoPreview    = nullptr;
-    BitrateCurveView*   m_bitrateCurve    = nullptr;
+    ChartTabWidget*     m_chartTabs        = nullptr;
+    VideoPreviewWidget* m_videoPreview     = nullptr;
     ViewModeSelector*   m_viewModeSelector = nullptr;
-    QTreeView*          m_sourceInfoTree  = nullptr;
 
     // Dock widgets
     StreamInfoTree*   m_streamInfoTree = nullptr;
