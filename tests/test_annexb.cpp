@@ -16,6 +16,7 @@ extern "C" {
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 TEST_CASE("vsa_annexb_find_nals: empty inputs") {
