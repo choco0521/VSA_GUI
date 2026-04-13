@@ -149,15 +149,97 @@ void MainWindow::setupDocks() {
     chartDock->setAllowedAreas(Qt::TopDockWidgetArea);
     addDockWidget(Qt::TopDockWidgetArea, chartDock);
 
-    // --- Left dock: Stream info tree ---
-    auto* streamDock = new QDockWidget(tr("Full stream"), this);
-    streamDock->setObjectName(QStringLiteral("StreamInfoDock"));
-    m_streamInfoTree = new StreamInfoTree(streamDock);
+    // --- Left dock (top): Stream panel with 6 tabs -------------------------
+    // The "Stream" tab hosts the existing StreamInfoTree. The other five
+    // tabs are placeholders that will be filled in once real bitstream
+    // parsing lands.
+    auto* streamDock = new QDockWidget(tr("Stream"), this);
+    streamDock->setObjectName(QStringLiteral("StreamDock"));
+
+    auto* streamTabs = new QTabWidget(streamDock);
+    streamTabs->setDocumentMode(true);
+    streamTabs->setTabPosition(QTabWidget::South);
+
+    m_streamInfoTree = new StreamInfoTree(streamTabs);
     m_streamInfoTree->setStreamInfo(m_data.stream(), m_data.frames());
     m_streamInfoTree->setMinimumWidth(230);
-    streamDock->setWidget(m_streamInfoTree);
+    streamTabs->addTab(m_streamInfoTree, tr("Stream"));
+
+    auto makePlaceholder = [&](const QString& tip) {
+        auto* edit = new QPlainTextEdit(streamTabs);
+        edit->setReadOnly(true);
+        edit->setPlainText(tip);
+        QFont mono(QStringLiteral("Menlo"));
+        mono.setStyleHint(QFont::Monospace);
+        mono.setPointSize(9);
+        edit->setFont(mono);
+        return edit;
+    };
+    streamTabs->addTab(makePlaceholder(tr("(picture parameters per frame)")),
+                       tr("Picture"));
+    streamTabs->addTab(makePlaceholder(tr("(raw Y/U/V pixel values)")),
+                       tr("Pixels"));
+    streamTabs->addTab(makePlaceholder(tr("(VPS / SPS / PPS / SEI headers)")),
+                       tr("Headers"));
+    streamTabs->addTab(makePlaceholder(tr("(aggregated statistics)")),
+                       tr("Statistics"));
+    streamTabs->addTab(makePlaceholder(tr("(visual overlays configuration)")),
+                       tr("Overlay"));
+
+    streamDock->setWidget(streamTabs);
     streamDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::LeftDockWidgetArea, streamDock);
+
+    // --- Left dock (bottom): Stream Viewer (NAL-unit listing) --------------
+    auto* streamViewerDock = new QDockWidget(tr("Stream Viewer"), this);
+    streamViewerDock->setObjectName(QStringLiteral("StreamViewerDock"));
+    auto* streamTree = new QTreeView(streamViewerDock);
+    {
+        auto* model = new QStandardItemModel(streamTree);
+        model->setHorizontalHeaderLabels({tr("offset"), tr("name"), tr("val")});
+
+        struct NalRow { qint64 offset; const char* name; const char* val; };
+        static const NalRow kNals[] = {
+            { 0x00000000, "video_parameter_set_rbsp() {VPS_NUT}",        ""  },
+            { 0x0000000c, "seq_parameter_set_rbsp() {SPS_NUT}",          ""  },
+            { 0x00000024, "pic_parameter_set_rbsp() {PPS_NUT}",          ""  },
+            { 0x0000002c, "sei_rbsp() {PREFIX_SEI_NUT}",                 ""  },
+            { 0x00000118, "slice_segment_layer_rbsp() {IDR_W_RADL}",     "I" },
+            { 0x0000d1a2, "slice_segment_layer_rbsp() {TRAIL_R}",        "P" },
+            { 0x00010843, "slice_segment_layer_rbsp() {TRAIL_N}",        "B" },
+            { 0x000118e5, "slice_segment_layer_rbsp() {TRAIL_N}",        "B" },
+            { 0x00012840, "slice_segment_layer_rbsp() {TRAIL_R}",        "P" },
+            { 0x000160d9, "slice_segment_layer_rbsp() {TRAIL_N}",        "B" },
+            { 0x00017230, "slice_segment_layer_rbsp() {TRAIL_N}",        "B" },
+            { 0x00018178, "slice_segment_layer_rbsp() {TRAIL_R}",        "P" },
+            { 0x0001b4a1, "slice_segment_layer_rbsp() {TRAIL_N}",        "B" },
+            { 0x0001c2f7, "slice_segment_layer_rbsp() {TRAIL_N}",        "B" },
+            { 0x0001d3c0, "slice_segment_layer_rbsp() {TRAIL_R}",        "P" },
+        };
+        for (const auto& n : kNals) {
+            auto* off = new QStandardItem(
+                QStringLiteral("0x%1").arg(n.offset, 8, 16, QChar('0')));
+            auto* nm  = new QStandardItem(QLatin1String(n.name));
+            auto* vl  = new QStandardItem(QLatin1String(n.val));
+            for (auto* it : {off, nm, vl}) it->setEditable(false);
+            model->appendRow({off, nm, vl});
+        }
+        streamTree->setModel(model);
+        streamTree->setAlternatingRowColors(true);
+        streamTree->setRootIsDecorated(false);
+        streamTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        streamTree->setUniformRowHeights(true);
+        streamTree->header()->setStretchLastSection(false);
+        streamTree->setColumnWidth(0, 80);
+        streamTree->setColumnWidth(1, 230);
+    }
+    streamViewerDock->setWidget(streamTree);
+    streamViewerDock->setMinimumWidth(230);
+    streamViewerDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    addDockWidget(Qt::LeftDockWidgetArea, streamViewerDock);
+
+    // Stack Stream (top) over Stream Viewer (bottom) on the left.
+    splitDockWidget(streamDock, streamViewerDock, Qt::Vertical);
 
     // --- Right (top) dock: Block Presenter (motion-vector viewer) ---
     auto* mvDock = new QDockWidget(tr("Block Presenter"), this);
@@ -196,53 +278,7 @@ static QPlainTextEdit* makeMonoEdit(const QString& initial, QWidget* parent) {
 }
 
 void MainWindow::setupBottomDocks() {
-    // --- Bottom-left dock: Stream Viewer -----------------------------------
-    // A NAL-unit / syntax-element listing. Implemented as a QTreeView backed
-    // by a QStandardItemModel with mock bitstream entries.
-    auto* streamDock = new QDockWidget(tr("Stream Viewer"), this);
-    streamDock->setObjectName(QStringLiteral("StreamViewerDock"));
-    auto* streamTree = new QTreeView(streamDock);
-    {
-        auto* model = new QStandardItemModel(streamTree);
-        model->setHorizontalHeaderLabels(
-            {tr("#"), tr("offset"), tr("nal unit type"), tr("size")});
-
-        struct NalRow { int idx; qint64 offset; const char* type; int size; };
-        static const NalRow kNals[] = {
-            { 0, 0x00000000, "VPS_NUT",                12 },
-            { 1, 0x0000000c, "SPS_NUT",                24 },
-            { 2, 0x00000024, "PPS_NUT",                 8 },
-            { 3, 0x0000002c, "PREFIX_SEI_NUT",        236 },
-            { 4, 0x00000118, "IDR_W_RADL (I-slice)", 53482 },
-            { 5, 0x0000d1a2, "TRAIL_R (P-slice)",    14017 },
-            { 6, 0x00010843, "TRAIL_N (B-slice)",     4258 },
-            { 7, 0x000118e5, "TRAIL_N (B-slice)",     3935 },
-            { 8, 0x00012840, "TRAIL_R (P-slice)",    14121 },
-            { 9, 0x000160d9, "TRAIL_N (B-slice)",     4471 },
-            {10, 0x00017230, "TRAIL_N (B-slice)",     3912 },
-            {11, 0x00018178, "TRAIL_R (P-slice)",    13887 },
-        };
-        for (const auto& n : kNals) {
-            auto* idx  = new QStandardItem(QString::number(n.idx));
-            auto* off  = new QStandardItem(
-                QStringLiteral("0x%1").arg(n.offset, 8, 16, QChar('0')));
-            auto* type = new QStandardItem(QLatin1String(n.type));
-            auto* size = new QStandardItem(QString::number(n.size));
-            for (auto* it : {idx, off, type, size}) it->setEditable(false);
-            model->appendRow({idx, off, type, size});
-        }
-        streamTree->setModel(model);
-        streamTree->setAlternatingRowColors(true);
-        streamTree->setRootIsDecorated(false);
-        streamTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        streamTree->header()->setStretchLastSection(true);
-        streamTree->setUniformRowHeights(true);
-    }
-    streamDock->setWidget(streamTree);
-    streamDock->setMinimumHeight(140);
-    addDockWidget(Qt::BottomDockWidgetArea, streamDock);
-
-    // --- Bottom-right dock: Hex Viewer / DPB / Message / Buffer / Comment ---
+    // --- Bottom dock: Hex Viewer / DPB / Message / Buffer / Comment --------
     auto* bitstreamDock = new QDockWidget(tr("Bitstream"), this);
     bitstreamDock->setObjectName(QStringLiteral("BitstreamDock"));
     auto* tabs = new QTabWidget(bitstreamDock);
@@ -330,9 +366,6 @@ void MainWindow::setupBottomDocks() {
     bitstreamDock->setWidget(tabs);
     bitstreamDock->setMinimumHeight(140);
     addDockWidget(Qt::BottomDockWidgetArea, bitstreamDock);
-
-    // Place the two bottom docks side-by-side.
-    splitDockWidget(streamDock, bitstreamDock, Qt::Horizontal);
 }
 
 void MainWindow::setupToolbarAndMenu() {
