@@ -31,7 +31,8 @@
 namespace vsa {
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("VSA GUI — /Volumes/4test/test_265.265"));
+    // The window title shows the full bitstream path (matching StreamEye).
+    setWindowTitle(QStringLiteral("/Volumes/4test/test_265.265"));
 
     setupDataModel();
     setupCentralLayout();
