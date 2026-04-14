@@ -118,53 +118,107 @@ echo "install_jm.sh: building JM"
 find "$JM_DIR" -type f \( -name 'Makefile*' -o -name '*.sh' \) \
     -exec sed -i 's/\r$//' {} +
 
+echo "install_jm.sh: initial JM directory layout (top two levels):"
+find "$JM_DIR" -maxdepth 2 -type d | sort
+echo "install_jm.sh: top-level Makefile target listing:"
+grep -E '^[A-Za-z0-9_.-]+:' "$JM_DIR/Makefile" 2>/dev/null | head -20 || true
+
 MAKE_JOBS="$(nproc 2>/dev/null || echo 2)"
-if ! make -C "$JM_DIR" -j"$MAKE_JOBS" 2>&1 | tail -40; then
-    echo "install_jm.sh: top-level make failed, trying ldecod only" >&2
-    if ! make -C "$JM_DIR/ldecod" -j"$MAKE_JOBS" 2>&1 | tail -40; then
-        echo "install_jm.sh: ldecod build failed" >&2
-        echo "build-failed" > "$INSTALL_DIR/STATUS"
-        exit 4
+
+# Pipe `make` output through tee so we can both tail it to the log
+# and get the real exit status via ${PIPESTATUS[0]}. A bare `make | tail`
+# would hide build failures behind tail's exit code 0 and let the
+# harvest step run on an incomplete tree.
+make_with_status() {
+    local target_dir="$1"
+    (cd "$target_dir" && make -j"$MAKE_JOBS" 2>&1) \
+        | tee "$WORK_DIR/make.log" | tail -60
+    return "${PIPESTATUS[0]}"
+}
+
+build_ok=0
+if make_with_status "$JM_DIR"; then
+    build_ok=1
+else
+    echo "install_jm.sh: top-level make failed (exit $?), trying lcommon + ldecod" >&2
+    if make_with_status "$JM_DIR/lcommon" \
+       && make_with_status "$JM_DIR/ldecod"; then
+        build_ok=1
     fi
+fi
+
+if [[ "$build_ok" -ne 1 ]]; then
+    echo "install_jm.sh: build failed, last 80 lines of make.log:" >&2
+    tail -80 "$WORK_DIR/make.log" >&2 || true
+    echo "build-failed" > "$INSTALL_DIR/STATUS"
+    exit 4
 fi
 
 # ---------------------------------------------------------------------
 # Step 4: harvest binaries.
 #
-# JM's Makefile usually writes into `bin/` relative to its source root
-# but older forks place it under `ldecod/bin/`. Accept either layout.
+# JM upstream versions and community forks all place the built
+# decoder in different locations. Rather than enumerate every
+# historical spelling, locate *any* executable file whose basename
+# starts with `ldecod` anywhere under $JM_DIR and take the first
+# match. The `file` command is preferred to distinguish the built
+# ELF from a leftover source file of the same stem, with a
+# size-based fallback when `file` is not installed on the runner.
 # ---------------------------------------------------------------------
-copied=0
-for cand in \
-    "$JM_DIR/bin/ldecod.exe" \
-    "$JM_DIR/ldecod/bin/ldecod.exe" \
-    "$JM_DIR/bin/ldecod" \
-    "$JM_DIR/ldecod/bin/ldecod" \
-    ; do
-    if [[ -f "$cand" ]]; then
-        cp "$cand" "$INSTALL_DIR/bin/ldecod.exe"
-        chmod +x "$INSTALL_DIR/bin/ldecod.exe"
-        copied=1
-        echo "install_jm.sh: installed $(basename "$cand") → $INSTALL_DIR/bin/ldecod.exe"
-        break
+echo "install_jm.sh: searching for built ldecod binary"
+mapfile -t LDECOD_CANDIDATES < <(
+    find "$JM_DIR" -type f \
+         \( -name 'ldecod.exe' -o -name 'ldecod' \) \
+         -not -name '*.c' -not -name '*.h' 2>/dev/null
+)
+printf 'install_jm.sh: candidate: %s\n' "${LDECOD_CANDIDATES[@]}"
+
+chosen=""
+for cand in "${LDECOD_CANDIDATES[@]}"; do
+    if command -v file >/dev/null 2>&1; then
+        if file "$cand" 2>/dev/null | grep -qE 'ELF.*executable|Mach-O.*executable'; then
+            chosen="$cand"
+            break
+        fi
+    else
+        # No `file` available: fall back to "executable bit set AND
+        # at least 10 kB" which is comfortably above any shell stub.
+        sz="$(stat -c '%s' "$cand" 2>/dev/null || echo 0)"
+        if [[ -x "$cand" && "$sz" -ge 10240 ]]; then
+            chosen="$cand"
+            break
+        fi
     fi
 done
-if [[ "$copied" -eq 0 ]]; then
+
+if [[ -z "$chosen" ]]; then
     echo "install_jm.sh: could not locate built ldecod binary" >&2
-    find "$JM_DIR" -type f -name 'ldecod*' -executable 2>/dev/null | head -20 || true
+    echo "install_jm.sh: full JM tree after build (first 80 entries):" >&2
+    find "$JM_DIR" -type f | head -80 >&2
+    echo "install_jm.sh: all ELF files found under $JM_DIR:" >&2
+    find "$JM_DIR" -type f -exec file {} + 2>/dev/null \
+        | grep -E 'ELF|Mach-O' | head -40 >&2 || true
     echo "harvest-failed" > "$INSTALL_DIR/STATUS"
     exit 5
 fi
 
+cp "$chosen" "$INSTALL_DIR/bin/ldecod.exe"
+chmod +x "$INSTALL_DIR/bin/ldecod.exe"
+echo "install_jm.sh: installed $chosen → $INSTALL_DIR/bin/ldecod.exe"
+
 # lencod is a nice-to-have, not required for Phase D / E.
-for cand in \
-    "$JM_DIR/bin/lencod.exe" \
-    "$JM_DIR/lencod/bin/lencod.exe" \
-    "$JM_DIR/bin/lencod" \
-    ; do
-    if [[ -f "$cand" ]]; then
+mapfile -t LENCOD_CANDIDATES < <(
+    find "$JM_DIR" -type f \
+         \( -name 'lencod.exe' -o -name 'lencod' \) \
+         -not -name '*.c' -not -name '*.h' 2>/dev/null
+)
+for cand in "${LENCOD_CANDIDATES[@]}"; do
+    if [[ -x "$cand" ]] && \
+       (command -v file >/dev/null 2>&1 \
+        && file "$cand" 2>/dev/null | grep -qE 'ELF.*executable'); then
         cp "$cand" "$INSTALL_DIR/bin/lencod.exe"
         chmod +x "$INSTALL_DIR/bin/lencod.exe"
+        echo "install_jm.sh: installed $cand → $INSTALL_DIR/bin/lencod.exe"
         break
     fi
 done
