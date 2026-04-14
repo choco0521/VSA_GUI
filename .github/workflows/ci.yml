@@ -38,26 +38,42 @@ jobs:
             libgl1-mesa-dev
 
       # ---------------------------------------------------------------
-      # JM H.264 reference decoder.
+      # JM H.264 reference decoder (Phase D.2).
       #
-      # We download, patch (enable TRACE macro), build once and cache the
-      # resulting binaries in ~/.cache/jm. Subsequent runs skip the build
-      # entirely — the binary lives in the cache and is restored before
-      # the reference-trace step below.
+      # Downloaded from the HHI gitlab (with two fallback sources),
+      # patched so ldecod/inc/defines.h has TRACE=1, built once, and
+      # cached under ~/.cache/jm. The cache key tracks both the JM
+      # version and the install script's hash so that bumping either
+      # invalidates the stored binary.
       #
-      # Phase A just installs JM so the infrastructure is proven to work.
-      # Phases D/E will add the actual `ldecod.exe` invocation and diffs.
+      # Failure here is non-fatal for the main build: the Phase D.3
+      # trace diff step checks $HOME/.cache/jm/STATUS and self-skips
+      # if it is not "ready", printing the reason to the log.
       # ---------------------------------------------------------------
       - name: Cache JM reference decoder
         id: cache-jm
         uses: actions/cache@v4
         with:
           path: ~/.cache/jm
-          key: jm-19.0-trace-v1
+          key: jm-trace-${{ hashFiles('tests/scripts/install_jm.sh') }}-v2
 
       - name: Build JM reference decoder (cache miss only)
         if: steps.cache-jm.outputs.cache-hit != 'true'
-        run: bash tests/scripts/install_jm.sh ~/.cache/jm || echo "JM build stub — real build wired up in Phase D"
+        continue-on-error: true
+        run: bash tests/scripts/install_jm.sh "$HOME/.cache/jm"
+
+      - name: Show JM install status
+        if: always()
+        run: |
+          if [[ -f "$HOME/.cache/jm/STATUS" ]]; then
+            echo "JM status: $(cat "$HOME/.cache/jm/STATUS")"
+            if [[ -f "$HOME/.cache/jm/VERSION" ]]; then
+              echo "JM version: $(cat "$HOME/.cache/jm/VERSION")"
+            fi
+            ls -la "$HOME/.cache/jm/bin/" 2>/dev/null || true
+          else
+            echo "JM not installed (install step skipped or failed before STATUS write)"
+          fi
 
       # ---------------------------------------------------------------
       # Elecard TheaterSquare 1080p H.264 sample.
