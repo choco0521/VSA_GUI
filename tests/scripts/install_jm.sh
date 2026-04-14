@@ -144,20 +144,57 @@ find "$JM_DIR" -maxdepth 2 -type f \
 
 # ---------------------------------------------------------------------
 # Step 3: enable TRACE output on the decoder.
+#
+# The location of defines.h has moved across JM versions:
+#
+#   classic 19.0    : ldecod/inc/defines.h
+#   modern (jvet)   : source/app/ldecod/defines.h
+#
+# We probe both, then `find` the tree for any defines.h that contains
+# a `#define TRACE` line and patch every match. Without this step the
+# build will succeed but ldecod.exe will not emit the trace stream
+# Phase D.3 needs, and the trace-diff would silently compare against
+# an empty file. We therefore treat a failure to patch any TRACE
+# macro as a hard error.
 # ---------------------------------------------------------------------
 diag_hr "Step 3: patch TRACE macro"
-DEFINES="$JM_DIR/ldecod/inc/defines.h"
-if [[ -f "$DEFINES" ]]; then
-    diag "patching $DEFINES"
-    sed -i.bak -E 's@^(#define[[:space:]]+TRACE[[:space:]]+)[0-9]+.*$@\11@' "$DEFINES"
-    diag "  after patch:"
-    grep -n '#define[[:space:]]\+TRACE' "$DEFINES" 2>/dev/null \
-        | sed 's/^/    /' | tee -a "$DIAG" >/dev/null || true
-else
-    diag "WARNING: $DEFINES not found — trace output may stay disabled"
-    diag "searching for a substitute defines.h:"
-    find "$JM_DIR" -name defines.h 2>/dev/null | tee -a "$DIAG" >/dev/null
+
+mapfile -t TRACE_FILES < <(
+    grep -rEl '^[[:space:]]*#define[[:space:]]+TRACE([[:space:]]|$)' \
+        "$JM_DIR" 2>/dev/null \
+        --include='defines.h' --include='*.h'
+)
+diag "TRACE macro candidate files (${#TRACE_FILES[@]}):"
+printf '  %s\n' "${TRACE_FILES[@]}" | tee -a "$DIAG" >/dev/null
+
+patched=0
+for f in "${TRACE_FILES[@]}"; do
+    # Skip the encoder header — only the decoder's TRACE matters for
+    # Phase D.3, and patching lencod risks breaking the unrelated
+    # lencod build path.
+    case "$f" in
+        */ldecod/*|*/lcommon/*) ;;
+        *) diag "  skipping $f (not a decoder header)"; continue ;;
+    esac
+    diag "patching $f"
+    sed -i.bak -E 's@^([[:space:]]*#define[[:space:]]+TRACE[[:space:]]+)[0-9]+.*$@\11@' "$f"
+    if grep -E '^[[:space:]]*#define[[:space:]]+TRACE[[:space:]]+1' "$f" >/dev/null; then
+        diag "  → patched OK ($(grep -nE '^[[:space:]]*#define[[:space:]]+TRACE' "$f" | head -1))"
+        patched=$((patched + 1))
+    else
+        diag "  → patch did not produce '#define TRACE 1', leaving file alone"
+    fi
+done
+
+if [[ "$patched" -eq 0 ]]; then
+    diag "FATAL: no decoder defines.h could be patched to enable TRACE"
+    diag "without TRACE the Phase D.3 ldecod trace would be empty,"
+    diag "so this script refuses to declare success. Check that the JM"
+    diag "tree layout has not changed yet again."
+    echo "trace-patch-failed" > "$INSTALL_DIR/STATUS"
+    exit 6
 fi
+diag "TRACE patched in $patched file(s)"
 
 # Some JM distributions ship Windows CRLF line endings in shell
 # scripts and Makefiles. Normalise them before invoking make.
