@@ -44,6 +44,8 @@ set(VSA_CODEC_SOURCES
     src/codec/h264_nalu.h
     src/codec/h264_sps.h
     src/codec/h264_sps.c
+    src/codec/h264_slice_header.h
+    src/codec/h264_slice_header.c
 )
 
 add_library(vsa_codec STATIC ${VSA_CODEC_SOURCES})
@@ -177,6 +179,7 @@ if(VSA_BUILD_TESTS)
         tests/test_annexb_large.cpp
         tests/test_rbsp.cpp
         tests/test_sps.cpp
+        tests/test_slice_header.cpp
     )
     add_executable(vsa_tests ${VSA_TEST_SOURCES})
     target_link_libraries(vsa_tests PRIVATE vsa_codec doctest::doctest)
