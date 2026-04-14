@@ -1,0 +1,256 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  build-and-test:
+    name: Ubuntu / Qt6 / vsa_codec
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            gcc g++ \
+            make \
+            python3 \
+            ffmpeg \
+            unzip \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            libqt6charts6-dev \
+            libgl1-mesa-dev
+
+      # ---------------------------------------------------------------
+      # JM H.264 reference decoder (Phase D.2).
+      #
+      # Downloaded from the HHI gitlab (with two fallback sources),
+      # patched so ldecod/inc/defines.h has TRACE=1, built once, and
+      # cached under ~/.cache/jm. The cache key tracks both the JM
+      # version and the install script's hash so that bumping either
+      # invalidates the stored binary.
+      #
+      # Failure here is non-fatal for the main build: the Phase D.3
+      # trace diff step checks $HOME/.cache/jm/STATUS and self-skips
+      # if it is not "ready", printing the reason to the log.
+      # ---------------------------------------------------------------
+      - name: Cache JM reference decoder
+        id: cache-jm
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/jm
+          key: jm-trace-${{ hashFiles('tests/scripts/install_jm.sh') }}-v2
+
+      - name: Build JM reference decoder (cache miss only)
+        if: steps.cache-jm.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: bash tests/scripts/install_jm.sh "$HOME/.cache/jm"
+
+      - name: Show JM install status
+        if: always()
+        run: |
+          if [[ -f "$HOME/.cache/jm/STATUS" ]]; then
+            echo "JM status:  $(cat "$HOME/.cache/jm/STATUS")"
+            if [[ -f "$HOME/.cache/jm/VERSION" ]]; then
+              echo "JM version: $(cat "$HOME/.cache/jm/VERSION")"
+            fi
+            echo
+            echo "Contents of $HOME/.cache/jm/bin/:"
+            ls -la "$HOME/.cache/jm/bin/" 2>/dev/null || true
+            echo
+            if [[ -f "$HOME/.cache/jm/DIAGNOSTIC.txt" ]]; then
+              echo "===== DIAGNOSTIC.txt ====="
+              cat "$HOME/.cache/jm/DIAGNOSTIC.txt"
+              echo "===== end of DIAGNOSTIC.txt ====="
+            else
+              echo "(no DIAGNOSTIC.txt — script crashed before writing it)"
+            fi
+          else
+            echo "JM not installed (install step skipped or failed before STATUS write)"
+          fi
+
+      # ---------------------------------------------------------------
+      # Post / update a sticky PR comment with the JM install status
+      # so the value is reachable through the GitHub API (and therefore
+      # directly readable by external automation) without scraping
+      # workflow logs.
+      # ---------------------------------------------------------------
+      - name: Post / update JM install status PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const home = process.env.HOME;
+            const statusPath = `${home}/.cache/jm/STATUS`;
+            const diagPath   = `${home}/.cache/jm/DIAGNOSTIC.txt`;
+            const versionPath = `${home}/.cache/jm/VERSION`;
+            const status  = fs.existsSync(statusPath)
+              ? fs.readFileSync(statusPath, 'utf8').trim()
+              : 'not-installed';
+            const version = fs.existsSync(versionPath)
+              ? fs.readFileSync(versionPath, 'utf8').trim()
+              : 'unknown';
+            let diag = '(no DIAGNOSTIC.txt)';
+            if (fs.existsSync(diagPath)) {
+              diag = fs.readFileSync(diagPath, 'utf8');
+              // Cap at 60 KB so we never blow past GitHub's
+              // ~65 KB issue body limit.
+              if (diag.length > 60000) {
+                diag = diag.slice(0, 30000) +
+                       '\n...[diagnostic truncated]...\n' +
+                       diag.slice(-30000);
+              }
+            }
+            const marker = '### JM reference decoder install status';
+            const body =
+              `${marker}\n` +
+              `**status:** \`${status}\`  \n` +
+              `**version:** \`${version}\`\n\n` +
+              '<details><summary>DIAGNOSTIC.txt</summary>\n\n```\n' +
+              diag +
+              '\n```\n</details>\n\n' +
+              `_Posted by CI run ${{ github.run_id }} on commit ${{ github.sha }}._`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      # ---------------------------------------------------------------
+      # Elecard TheaterSquare 1080p H.264 sample.
+      #
+      # Downloaded from elecard.com, repackaged from MP4 to raw Annex B
+      # via ffmpeg, and cached so subsequent runs are offline. Not
+      # committed to the repository — only the fetch script and this
+      # workflow reference live in the tree. When the fetch fails
+      # (elecard.com unreachable, CI caching glitch, etc.) the
+      # integration test test_annexb_large.cpp self-skips because the
+      # TEST_ELECARD_STREAM environment variable will not resolve to a
+      # readable file.
+      # ---------------------------------------------------------------
+      - name: Cache Elecard TheaterSquare sample
+        id: cache-elecard
+        uses: actions/cache@v4
+        with:
+          path: .vsa-cache/theater_square.h264
+          key: elecard-theater-square-v1
+
+      - name: Fetch Elecard TheaterSquare sample (cache miss only)
+        if: steps.cache-elecard.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          mkdir -p .vsa-cache
+          bash tests/scripts/fetch_elecard_sample.sh .vsa-cache
+
+      # ---------------------------------------------------------------
+      # vsa_codec + vsa_tests + vsa_parse + vsa_gui
+      # ---------------------------------------------------------------
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Run unit tests
+        env:
+          TEST_ELECARD_STREAM: ${{ github.workspace }}/.vsa-cache/theater_square.h264
+        run: ctest --test-dir build --output-on-failure
+
+      - name: vsa_parse smoke
+        run: ./build/vsa_parse --version
+
+      # ---------------------------------------------------------------
+      # Surface the Elecard TheaterSquare NAL breakdown so the numbers
+      # are visible outside the raw test log:
+      #   1. emit a human-readable table to $GITHUB_STEP_SUMMARY
+      #   2. echo the same content to the workflow log
+      #   3. on pull_request events, post / update a sticky PR comment
+      # ---------------------------------------------------------------
+      - name: Summarize Elecard stream stats
+        id: elecard-stats
+        if: always()
+        run: |
+          ELECARD="${{ github.workspace }}/.vsa-cache/theater_square.h264"
+          if [[ ! -s "$ELECARD" ]]; then
+            echo "Elecard stream not available (fetch skipped or failed)" \
+              > /tmp/elecard_stats.txt
+          else
+            python3 tests/scripts/elecard_stats.py "$ELECARD" \
+              > /tmp/elecard_stats.txt
+          fi
+          {
+            echo "### TheaterSquare Elecard stream stats"
+            echo '```'
+            cat /tmp/elecard_stats.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/elecard_stats.txt
+
+      - name: Post / update Elecard stats PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = "### TheaterSquare Elecard stream stats\n" +
+                         "```\n" +
+                         fs.readFileSync('/tmp/elecard_stats.txt', 'utf8') +
+                         "```\n" +
+                         "_Posted by CI run ${{ github.run_id }} on commit ${{ github.sha }}._";
+            const marker = "### TheaterSquare Elecard stream stats";
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
