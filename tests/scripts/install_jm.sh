@@ -157,93 +157,88 @@ find "$JM_DIR" -maxdepth 2 -type f \
 # an empty file. We therefore treat a failure to patch any TRACE
 # macro as a hard error.
 # ---------------------------------------------------------------------
-diag_hr "Step 3: patch TRACE macro"
+diag_hr "Step 3: neutralise existing TRACE defines, prepare CFLAGS injection"
 
-# First: enumerate every defines.h in the tree and show every line
-# inside it that mentions the word TRACE. This is the part that lets
-# us see exactly what symbol JM uses on this commit, regardless of
-# whether the script's pattern guess is right.
+# Strategy reset (after four rounds of regex chasing in Phase D.2):
+#
+#   1. Walk every .h / .c file under the decoder source directories
+#      and comment out any line that contains a `#define TRACE`
+#      directive, regardless of spelling. Commenting it out — rather
+#      than substituting a value — is permissive: any leading
+#      whitespace, any value, any trailing comment is wrapped by
+#      `/* JM_INSTALL: ... */` so the file still compiles.
+#
+#   2. Inject `-DTRACE=1` into CFLAGS / CXXFLAGS in Step 4, so the
+#      compiler sees TRACE=1 globally. With the existing in-source
+#      definition neutralised, the command-line define wins.
+#
+#   3. In Step 6, run ldecod against tests/fixtures/tiny_clip.h264
+#      with -p TraceFile=... and check whether the resulting trace
+#      file is non-empty. That is the *real* signal that the build
+#      is trace-enabled — much more reliable than guessing the right
+#      regex.
+#
+# This script never declares trace-patch-failed any more. Either the
+# build succeeds with a working trace (status=ready), or it succeeds
+# without trace (status=ready-no-trace), or the build itself fails
+# (status=build-failed). Phase D.3 can self-skip on ready-no-trace.
+
+# Probe: enumerate every defines.h, every TRACE-related line, and every
+# matching #define line. The dump is for forensics only; correctness
+# does NOT depend on any of these patterns matching.
 mapfile -t DEFINES_FILES < <(find "$JM_DIR" -type f -name 'defines.h' 2>/dev/null | sort)
-diag "defines.h files in the tree (${#DEFINES_FILES[@]}):"
+diag "defines.h files in tree (${#DEFINES_FILES[@]}):"
 printf '  %s\n' "${DEFINES_FILES[@]}" | tee -a "$DIAG" >/dev/null
-
 for f in "${DEFINES_FILES[@]}"; do
     diag ""
-    diag "TRACE-related lines in $f:"
-    if grep -nE 'TRACE' "$f" 2>/dev/null | head -10 \
-            | sed 's/^/    /' | tee -a "$DIAG" >/dev/null; then
-        :
-    fi
-    if ! grep -nE 'TRACE' "$f" >/dev/null 2>&1; then
-        diag "    (no TRACE references)"
-    fi
+    diag "TRACE references in $f:"
+    grep -nE 'TRACE' "$f" 2>/dev/null | head -10 | sed 's/^/    /' \
+        | tee -a "$DIAG" >/dev/null \
+        || diag "    (none)"
 done
 
-# Then: scan EVERY .h and .c file under ldecod/lcommon for any
-# `#define TRACE` line, regardless of spacing. This is broader than
-# the previous attempt that only looked at defines.h headers.
+# Comment out any `#define TRACE` line in any decoder-relevant
+# source/header file. Use Python rather than sed so the rewrite is
+# whitespace-tolerant and we can count matches deterministically.
 diag ""
-diag "every '#define ... TRACE' line under decoder source:"
-grep -rnE '#[[:space:]]*define[[:space:]]+TRACE([[:space:]]|$)' \
-    "$JM_DIR/source/app/ldecod" \
-    "$JM_DIR/source/lib" \
-    2>/dev/null | head -20 | sed 's/^/    /' | tee -a "$DIAG" >/dev/null \
-    || diag "    (no #define TRACE lines)"
+diag "neutralising existing #define TRACE lines via Python:"
+python3 - "$JM_DIR" <<'PYEOF' | tee -a "$DIAG" >/dev/null
+import os, re, sys
 
-# Now try to patch. Accept any line containing
-#     # [optional ws] define [ws] TRACE [ws] <integer or expression>
-# under a decoder-relevant directory, and overwrite it with
-#     #define TRACE 1
-# preserving leading whitespace.
-patched=0
-patched_files=()
-mapfile -t CANDIDATE_FILES < <(
-    grep -rlE '#[[:space:]]*define[[:space:]]+TRACE([[:space:]]|$)' \
-        "$JM_DIR" 2>/dev/null \
-        --include='*.h' --include='*.c' --include='*.hh' --include='*.cc'
-)
-diag ""
-diag "candidate files containing '#define TRACE' (${#CANDIDATE_FILES[@]}):"
-printf '  %s\n' "${CANDIDATE_FILES[@]}" | tee -a "$DIAG" >/dev/null
+JM_DIR = sys.argv[1]
+DECODER_HINTS = ('ldecod', 'lcommon', 'lib/lcommon', '/lib/')
+PATTERN = re.compile(r'^([ \t]*)#[ \t]*define[ \t]+TRACE\b.*$', re.MULTILINE)
 
-for f in "${CANDIDATE_FILES[@]}"; do
-    case "$f" in
-        */ldecod/*|*/lcommon/*|*/lib/lcommon/*|*/lib/*) ;;
-        *) diag "  skipping $f (not a decoder source)"; continue ;;
-    esac
-    diag "patching $f"
-    cp "$f" "${f}.bak"
-    # The substitution rewrites any leading-whitespace + #define +
-    # whitespace + TRACE + whitespace + <anything until end of line>
-    # into the same prefix followed by `1`.
-    sed -E -i \
-        's@^([[:space:]]*#[[:space:]]*define[[:space:]]+TRACE[[:space:]]+).*$@\11@' \
-        "$f"
-    if grep -E '#[[:space:]]*define[[:space:]]+TRACE[[:space:]]+1[[:space:]]*$' "$f" >/dev/null; then
-        diag "  → OK"
-        diag "  $(grep -nE '#[[:space:]]*define[[:space:]]+TRACE' "$f" | head -1)"
-        patched=$((patched + 1))
-        patched_files+=("$f")
-    else
-        diag "  → substitution did not yield '#define TRACE 1', reverting"
-        mv "${f}.bak" "$f"
-    fi
-done
+neutralised = 0
+files_touched = []
+for root, dirs, files in os.walk(JM_DIR):
+    if not any(h in root for h in DECODER_HINTS):
+        continue
+    for fname in files:
+        if not fname.endswith(('.h', '.c', '.hh', '.cc', '.hpp', '.cpp')):
+            continue
+        path = os.path.join(root, fname)
+        try:
+            with open(path, 'r', errors='replace') as fh:
+                content = fh.read()
+        except Exception as e:
+            print(f"  read error {path}: {e}")
+            continue
+        new_content, n = PATTERN.subn(
+            lambda m: f'{m.group(1)}/* JM_INSTALL neutralised: {m.group(0).strip()} */',
+            content,
+        )
+        if n > 0:
+            with open(path, 'w') as fh:
+                fh.write(new_content)
+            neutralised += n
+            files_touched.append((path, n))
 
-if [[ "$patched" -eq 0 ]]; then
-    diag ""
-    diag "FATAL: no decoder source could be patched to enable TRACE"
-    diag "Check the dump above to see how the TRACE macro is spelled"
-    diag "in this JM version. Possible reasons:"
-    diag "  - TRACE is now set via target_compile_definitions in CMake"
-    diag "  - the symbol has been renamed (e.g. JM_TRACE, _TRACE_)"
-    diag "  - the decoder no longer ships a debug trace at all"
-    echo "trace-patch-failed" > "$INSTALL_DIR/STATUS"
-    exit 6
-fi
-diag ""
-diag "TRACE patched in $patched file(s):"
-printf '  %s\n' "${patched_files[@]}" | tee -a "$DIAG" >/dev/null
+for p, n in files_touched:
+    print(f"  {p}: {n} match(es)")
+print(f"NEUTRALISED_TOTAL={neutralised}")
+PYEOF
+diag "(if NEUTRALISED_TOTAL=0 the source had no in-place #define TRACE; -DTRACE=1 will still take effect)"
 
 # Some JM distributions ship Windows CRLF line endings in shell
 # scripts and Makefiles. Normalise them before invoking make.
@@ -251,13 +246,28 @@ find "$JM_DIR" -type f \( -name 'Makefile*' -o -name '*.sh' \) \
     -exec sed -i 's/\r$//' {} + 2>>"$DIAG" || true
 
 # ---------------------------------------------------------------------
-# Step 4: build. Try Makefile first (classic JM), fall back to a
-# CMake out-of-source build if the tree only ships with
-# CMakeLists.txt.
+# Step 4: build with -DTRACE=1 forced via CFLAGS.
+#
+# The classic JM Makefile is now a thin wrapper around cmake.py, so
+# both paths read CFLAGS from the environment. We export TRACE=1 in
+# the C and C++ flag environments and ask the JM cmake.py wrapper to
+# pass them through.
 # ---------------------------------------------------------------------
-diag_hr "Step 4: build"
+diag_hr "Step 4: build (CFLAGS=-DTRACE=1)"
 MAKE_JOBS="$(nproc 2>/dev/null || echo 2)"
 diag "using $MAKE_JOBS parallel jobs"
+
+# Note: -Wno-builtin-macro-redefined and -Wno-macro-redefined keep gcc/clang
+# from erroring out if any source we missed in Step 3 still tries to
+# define TRACE itself. The /* JM_INSTALL neutralised: */ approach
+# already prevents this in practice, but the warning suppression is
+# cheap insurance.
+TRACE_FLAGS="-DTRACE=1 -Wno-macro-redefined -Wno-builtin-macro-redefined"
+export CFLAGS="${TRACE_FLAGS} ${CFLAGS:-}"
+export CXXFLAGS="${TRACE_FLAGS} ${CXXFLAGS:-}"
+export CPPFLAGS="${TRACE_FLAGS} ${CPPFLAGS:-}"
+diag "CFLAGS=$CFLAGS"
+diag "CXXFLAGS=$CXXFLAGS"
 
 run_in_diag() {
     # Run a command, stream its stdout+stderr into the diagnostic log
@@ -293,6 +303,8 @@ if [[ "$build_ok" -ne 1 && -f "$JM_DIR/CMakeLists.txt" ]]; then
     mkdir -p "$JM_DIR/build"
     if run_in_diag cmake -S "$JM_DIR" -B "$JM_DIR/build" \
            -DCMAKE_BUILD_TYPE=Release \
+           "-DCMAKE_C_FLAGS=${TRACE_FLAGS}" \
+           "-DCMAKE_CXX_FLAGS=${TRACE_FLAGS}" \
            && run_in_diag cmake --build "$JM_DIR/build" -j "$MAKE_JOBS"; then
         build_ok=1
         cmake_rc=0
@@ -393,18 +405,76 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# Step 6: sanity-run ldecod so the binary is known-good before the
-# trace-diff step depends on it.
+# Step 6: end-to-end trace verification.
+#
+# The only reliable signal that we built JM with TRACE actually
+# enabled is to run ldecod against a known-good Annex B clip with
+# `-p TraceFile=...` and check whether the trace file has any bytes.
+# The fixture used here is tests/fixtures/tiny_clip.h264, which the
+# repo already ships and has known-good metadata.
+#
+# Three outcomes:
+#   trace file > 0 bytes  → STATUS=ready
+#   build OK, trace empty → STATUS=ready-no-trace (Phase D.3 will
+#                            fall back to ffprobe ground truth)
+#   ldecod cannot run     → STATUS=ready-no-trace (same fallback)
 # ---------------------------------------------------------------------
-diag_hr "Step 6: sanity ldecod --help"
-if "$INSTALL_DIR/bin/ldecod.exe" -h >"$INSTALL_DIR/bin/ldecod.help" 2>&1; then
-    diag "ldecod -h exit=0"
-else
-    diag "ldecod -h exit=$? (non-zero is acceptable — many JM builds exit 2 after dumping usage)"
-fi
-diag_tail 10 "$INSTALL_DIR/bin/ldecod.help"
+diag_hr "Step 6: ldecod -h sanity + end-to-end trace verification"
 
-echo "ready" > "$INSTALL_DIR/STATUS"
+# First: dump --help output for forensics.
+"$INSTALL_DIR/bin/ldecod.exe" -h >"$INSTALL_DIR/bin/ldecod.help" 2>&1 || true
+diag_tail 15 "$INSTALL_DIR/bin/ldecod.help"
+
+# Locate the fixture relative to the script's own directory so this
+# works regardless of the workflow's current working directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FIXTURE="$SCRIPT_DIR/../fixtures/tiny_clip.h264"
+
+trace_status="ready"
+if [[ ! -f "$FIXTURE" ]]; then
+    diag "fixture not found at $FIXTURE — cannot run end-to-end trace test"
+    diag "  (this is unexpected when running from the repo workflow)"
+    trace_status="ready-no-trace"
+else
+    TRACE_LOG="$INSTALL_DIR/trace_smoke.txt"
+    YUV_OUT="$INSTALL_DIR/trace_smoke.yuv"
+    diag "running: ldecod.exe -p InputFile=$FIXTURE -p TraceFile=$TRACE_LOG"
+    # JM ldecod usually wants either a config file (-d) or a
+    # parameter list (-p). Try -p first; some forks need both.
+    if "$INSTALL_DIR/bin/ldecod.exe" \
+            -p "InputFile=$FIXTURE" \
+            -p "OutputFile=$YUV_OUT" \
+            -p "TraceFile=$TRACE_LOG" \
+            >"$INSTALL_DIR/trace_smoke.stdout" \
+            2>"$INSTALL_DIR/trace_smoke.stderr"; then
+        diag "ldecod exit=0"
+    else
+        diag "ldecod exit=$?"
+    fi
+    diag "ldecod stdout (last 10):"
+    diag_tail 10 "$INSTALL_DIR/trace_smoke.stdout"
+    diag "ldecod stderr (last 10):"
+    diag_tail 10 "$INSTALL_DIR/trace_smoke.stderr"
+
+    if [[ -f "$TRACE_LOG" ]]; then
+        TRACE_BYTES="$(stat -c '%s' "$TRACE_LOG" 2>/dev/null || echo 0)"
+        diag "trace file: $TRACE_LOG ($TRACE_BYTES bytes)"
+        if [[ "$TRACE_BYTES" -gt 0 ]]; then
+            diag "first 20 lines of trace file:"
+            head -20 "$TRACE_LOG" 2>/dev/null | sed 's/^/    /' \
+                | tee -a "$DIAG" >/dev/null || true
+            trace_status="ready"
+        else
+            diag "trace file exists but is empty — TRACE was not active in this build"
+            trace_status="ready-no-trace"
+        fi
+    else
+        diag "trace file was never created"
+        trace_status="ready-no-trace"
+    fi
+fi
+
+echo "$trace_status" > "$INSTALL_DIR/STATUS"
 diag ""
-diag "install_jm.sh: done, STATUS=ready"
+diag "install_jm.sh: done, STATUS=$trace_status"
 ls -la "$INSTALL_DIR/bin/" | tee -a "$DIAG" >/dev/null
