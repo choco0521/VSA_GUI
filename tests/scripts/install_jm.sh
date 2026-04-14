@@ -159,42 +159,91 @@ find "$JM_DIR" -maxdepth 2 -type f \
 # ---------------------------------------------------------------------
 diag_hr "Step 3: patch TRACE macro"
 
-mapfile -t TRACE_FILES < <(
-    grep -rEl '^[[:space:]]*#define[[:space:]]+TRACE([[:space:]]|$)' \
-        "$JM_DIR" 2>/dev/null \
-        --include='defines.h' --include='*.h'
-)
-diag "TRACE macro candidate files (${#TRACE_FILES[@]}):"
-printf '  %s\n' "${TRACE_FILES[@]}" | tee -a "$DIAG" >/dev/null
+# First: enumerate every defines.h in the tree and show every line
+# inside it that mentions the word TRACE. This is the part that lets
+# us see exactly what symbol JM uses on this commit, regardless of
+# whether the script's pattern guess is right.
+mapfile -t DEFINES_FILES < <(find "$JM_DIR" -type f -name 'defines.h' 2>/dev/null | sort)
+diag "defines.h files in the tree (${#DEFINES_FILES[@]}):"
+printf '  %s\n' "${DEFINES_FILES[@]}" | tee -a "$DIAG" >/dev/null
 
+for f in "${DEFINES_FILES[@]}"; do
+    diag ""
+    diag "TRACE-related lines in $f:"
+    if grep -nE 'TRACE' "$f" 2>/dev/null | head -10 \
+            | sed 's/^/    /' | tee -a "$DIAG" >/dev/null; then
+        :
+    fi
+    if ! grep -nE 'TRACE' "$f" >/dev/null 2>&1; then
+        diag "    (no TRACE references)"
+    fi
+done
+
+# Then: scan EVERY .h and .c file under ldecod/lcommon for any
+# `#define TRACE` line, regardless of spacing. This is broader than
+# the previous attempt that only looked at defines.h headers.
+diag ""
+diag "every '#define ... TRACE' line under decoder source:"
+grep -rnE '#[[:space:]]*define[[:space:]]+TRACE([[:space:]]|$)' \
+    "$JM_DIR/source/app/ldecod" \
+    "$JM_DIR/source/lib" \
+    2>/dev/null | head -20 | sed 's/^/    /' | tee -a "$DIAG" >/dev/null \
+    || diag "    (no #define TRACE lines)"
+
+# Now try to patch. Accept any line containing
+#     # [optional ws] define [ws] TRACE [ws] <integer or expression>
+# under a decoder-relevant directory, and overwrite it with
+#     #define TRACE 1
+# preserving leading whitespace.
 patched=0
-for f in "${TRACE_FILES[@]}"; do
-    # Skip the encoder header — only the decoder's TRACE matters for
-    # Phase D.3, and patching lencod risks breaking the unrelated
-    # lencod build path.
+patched_files=()
+mapfile -t CANDIDATE_FILES < <(
+    grep -rlE '#[[:space:]]*define[[:space:]]+TRACE([[:space:]]|$)' \
+        "$JM_DIR" 2>/dev/null \
+        --include='*.h' --include='*.c' --include='*.hh' --include='*.cc'
+)
+diag ""
+diag "candidate files containing '#define TRACE' (${#CANDIDATE_FILES[@]}):"
+printf '  %s\n' "${CANDIDATE_FILES[@]}" | tee -a "$DIAG" >/dev/null
+
+for f in "${CANDIDATE_FILES[@]}"; do
     case "$f" in
-        */ldecod/*|*/lcommon/*) ;;
-        *) diag "  skipping $f (not a decoder header)"; continue ;;
+        */ldecod/*|*/lcommon/*|*/lib/lcommon/*|*/lib/*) ;;
+        *) diag "  skipping $f (not a decoder source)"; continue ;;
     esac
     diag "patching $f"
-    sed -i.bak -E 's@^([[:space:]]*#define[[:space:]]+TRACE[[:space:]]+)[0-9]+.*$@\11@' "$f"
-    if grep -E '^[[:space:]]*#define[[:space:]]+TRACE[[:space:]]+1' "$f" >/dev/null; then
-        diag "  → patched OK ($(grep -nE '^[[:space:]]*#define[[:space:]]+TRACE' "$f" | head -1))"
+    cp "$f" "${f}.bak"
+    # The substitution rewrites any leading-whitespace + #define +
+    # whitespace + TRACE + whitespace + <anything until end of line>
+    # into the same prefix followed by `1`.
+    sed -E -i \
+        's@^([[:space:]]*#[[:space:]]*define[[:space:]]+TRACE[[:space:]]+).*$@\11@' \
+        "$f"
+    if grep -E '#[[:space:]]*define[[:space:]]+TRACE[[:space:]]+1[[:space:]]*$' "$f" >/dev/null; then
+        diag "  → OK"
+        diag "  $(grep -nE '#[[:space:]]*define[[:space:]]+TRACE' "$f" | head -1)"
         patched=$((patched + 1))
+        patched_files+=("$f")
     else
-        diag "  → patch did not produce '#define TRACE 1', leaving file alone"
+        diag "  → substitution did not yield '#define TRACE 1', reverting"
+        mv "${f}.bak" "$f"
     fi
 done
 
 if [[ "$patched" -eq 0 ]]; then
-    diag "FATAL: no decoder defines.h could be patched to enable TRACE"
-    diag "without TRACE the Phase D.3 ldecod trace would be empty,"
-    diag "so this script refuses to declare success. Check that the JM"
-    diag "tree layout has not changed yet again."
+    diag ""
+    diag "FATAL: no decoder source could be patched to enable TRACE"
+    diag "Check the dump above to see how the TRACE macro is spelled"
+    diag "in this JM version. Possible reasons:"
+    diag "  - TRACE is now set via target_compile_definitions in CMake"
+    diag "  - the symbol has been renamed (e.g. JM_TRACE, _TRACE_)"
+    diag "  - the decoder no longer ships a debug trace at all"
     echo "trace-patch-failed" > "$INSTALL_DIR/STATUS"
     exit 6
 fi
-diag "TRACE patched in $patched file(s)"
+diag ""
+diag "TRACE patched in $patched file(s):"
+printf '  %s\n' "${patched_files[@]}" | tee -a "$DIAG" >/dev/null
 
 # Some JM distributions ship Windows CRLF line endings in shell
 # scripts and Makefiles. Normalise them before invoking make.
