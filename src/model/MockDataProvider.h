@@ -18,6 +18,15 @@ public:
 
     void loadFromResource(const QString& resourcePath = QStringLiteral(":/sample/mock_stream.json"));
 
+    // Phase F: replace the internal data wholesale, typically with
+    // values produced by H264DataProvider. Views keep their existing
+    // pointer to this MockDataProvider instance and re-read through
+    // the getters on the next redraw, so MainWindow only needs to
+    // retrigger setCurrentFrame(0) after calling these.
+    void setStream(const StreamInfo& stream);
+    void setFrames(QVector<FrameData> frames);
+    void setPictureSize(int width, int height);
+
     const StreamInfo&            stream() const { return m_stream; }
     const QVector<FrameData>&    frames() const { return m_frames; }
     int                          frameCount() const { return m_frames.size(); }

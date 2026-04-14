@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "model/H264DataProvider.h"
 #include "views/ChartTabWidget.h"
 #include "views/CodingUnitTree.h"
 #include "views/MotionVectorView.h"
@@ -9,6 +10,8 @@
 #include "widgets/ViewModeSelector.h"
 
 #include <QDockWidget>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -16,6 +19,7 @@
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QSplitter>
 #include <QStandardItem>
@@ -354,9 +358,19 @@ void MainWindow::setupToolbarAndMenu() {
 
     // Minimal menu bar (File / View / Help)
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(tr("&Open…"), this, [] {
-        // Placeholder — real parser wiring lives in a later milestone.
-    });
+    fileMenu->addAction(tr("&Open…"), this, [this] {
+        // Phase F: real parser wiring. Accepts raw Annex B .h264 /
+        // .264 today; wrapper containers (.mp4, .mkv, .ts, ...) are
+        // handled via the Phase G vsa_extract shell entry point and
+        // are not wired up to this menu item yet.
+        const QString path = QFileDialog::getOpenFileName(
+            this,
+            tr("Open H.264 bitstream"),
+            {},
+            tr("H.264 Annex B (*.h264 *.264);;All files (*)"));
+        if (path.isEmpty()) return;
+        loadH264File(path);
+    }, QKeySequence::Open);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("&Quit"), this, &QWidget::close, QKeySequence::Quit);
 
@@ -469,6 +483,41 @@ void MainWindow::setCurrentFrame(int poc) {
 void MainWindow::setCurrentCodingUnit(int ctuIdx) {
     m_currentCodingUnit = ctuIdx;
     emit currentCodingUnitChanged(m_currentCodingUnit);
+}
+
+void MainWindow::loadH264File(const QString& path) {
+    // Run the pure-C parser via the Qt adapter, then drop the result
+    // into the existing MockDataProvider instance so every view picks
+    // the new data up on its next redraw without needing to know
+    // whether the source was mock JSON or a real bitstream.
+    H264DataProvider provider(path);
+    if (!provider.isValid()) {
+        QMessageBox::warning(
+            this,
+            tr("Open H.264 bitstream"),
+            tr("Could not parse %1:\n\n%2")
+                .arg(path, provider.errorMessage()));
+        return;
+    }
+
+    m_data.setStream(provider.stream());
+    m_data.setFrames(provider.frames());
+    m_data.setPictureSize(provider.pictureWidth(), provider.pictureHeight());
+
+    // Feed the Stream Info tree again — it caches its own model from
+    // the StreamInfo struct and needs an explicit refresh.
+    if (m_streamInfoTree) {
+        m_streamInfoTree->setStreamInfo(m_data.stream(), m_data.frames());
+    }
+
+    // Reset the window title to reflect the newly-loaded file, matching
+    // the StreamEye-style "full bitstream path" header.
+    setWindowTitle(QFileInfo(path).absoluteFilePath());
+
+    // Force every frame-dependent view to re-render by pretending no
+    // frame is selected yet, then jumping back to frame 0.
+    m_currentFrame = -1;
+    setCurrentFrame(0);
 }
 
 void MainWindow::refreshStatusBar() {

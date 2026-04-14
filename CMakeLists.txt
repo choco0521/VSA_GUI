@@ -89,6 +89,8 @@ set(VSA_SOURCES
     src/model/CodingUnit.cpp
     src/model/MockDataProvider.h
     src/model/MockDataProvider.cpp
+    src/model/H264DataProvider.h
+    src/model/H264DataProvider.cpp
 
     src/views/ChartTabWidget.h
     src/views/ChartTabWidget.cpp

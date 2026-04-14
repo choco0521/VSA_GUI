@@ -31,6 +31,11 @@ public slots:
     void setCurrentFrame(int poc);
     // Update all CU-dependent views when the user clicks a block in the preview.
     void setCurrentCodingUnit(int ctuIdx);
+    // Parse a raw H.264 Annex B file via the vsa_codec C library
+    // (H264DataProvider) and replace every view's data source in
+    // place. Shows an error dialog and leaves the current data
+    // untouched on failure.
+    void loadH264File(const QString& path);
 
 signals:
     void currentFrameChanged(int poc);

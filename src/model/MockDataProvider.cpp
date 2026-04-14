@@ -91,6 +91,19 @@ void MockDataProvider::loadFromResource(const QString& resourcePath) {
     }
 }
 
+void MockDataProvider::setStream(const StreamInfo& stream) {
+    m_stream = stream;
+}
+
+void MockDataProvider::setFrames(QVector<FrameData> frames) {
+    m_frames = std::move(frames);
+}
+
+void MockDataProvider::setPictureSize(int width, int height) {
+    if (width > 0)  m_pictureWidth  = width;
+    if (height > 0) m_pictureHeight = height;
+}
+
 void MockDataProvider::generateFallbackData() {
     // Procedurally generate ~200 frames modelled after the screenshots.
     m_stream = StreamInfo{};
