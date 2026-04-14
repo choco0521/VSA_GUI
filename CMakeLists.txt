@@ -171,6 +171,7 @@ if(VSA_BUILD_TESTS)
         tests/test_smoke.cpp
         tests/test_bitreader.cpp
         tests/test_annexb.cpp
+        tests/test_annexb_large.cpp
         tests/test_rbsp.cpp
     )
     add_executable(vsa_tests ${VSA_TEST_SOURCES})

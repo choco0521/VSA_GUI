@@ -55,6 +55,32 @@ jobs:
         run: bash tests/scripts/install_jm.sh ~/.cache/jm || echo "JM build stub — real build wired up in Phase D"
 
       # ---------------------------------------------------------------
+      # Elecard TheaterSquare 1080p H.264 sample.
+      #
+      # Downloaded from elecard.com, repackaged from MP4 to raw Annex B
+      # via ffmpeg, and cached so subsequent runs are offline. Not
+      # committed to the repository — only the fetch script and this
+      # workflow reference live in the tree. When the fetch fails
+      # (elecard.com unreachable, CI caching glitch, etc.) the
+      # integration test test_annexb_large.cpp self-skips because the
+      # TEST_ELECARD_STREAM environment variable will not resolve to a
+      # readable file.
+      # ---------------------------------------------------------------
+      - name: Cache Elecard TheaterSquare sample
+        id: cache-elecard
+        uses: actions/cache@v4
+        with:
+          path: .vsa-cache/theater_square.h264
+          key: elecard-theater-square-v1
+
+      - name: Fetch Elecard TheaterSquare sample (cache miss only)
+        if: steps.cache-elecard.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          mkdir -p .vsa-cache
+          bash tests/scripts/fetch_elecard_sample.sh .vsa-cache
+
+      # ---------------------------------------------------------------
       # vsa_codec + vsa_tests + vsa_parse + vsa_gui
       # ---------------------------------------------------------------
       - name: Configure
@@ -64,6 +90,8 @@ jobs:
         run: cmake --build build -j
 
       - name: Run unit tests
+        env:
+          TEST_ELECARD_STREAM: ${{ github.workspace }}/.vsa-cache/theater_square.h264
         run: ctest --test-dir build --output-on-failure
 
       - name: vsa_parse smoke
